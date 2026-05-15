@@ -40,10 +40,12 @@ The dashboard automatically moves deprecated packs to a separate table.
 
 ## Pack Metadata File
 
-Every tracked pack has a `pack-metadata.yaml` at its repo root. This file is the source of truth for everything the dashboard displays and for the pack's declared maturity level. The schema is owned by the dashboard repo (`nebari-dev/software-pack-dashboard/schema/pack-metadata.schema.json`) and may be validated locally:
+Every tracked pack has a `pack-metadata.yaml` at its repo root. It is the source of truth for the pack's declared maturity level, ownership, and integration metadata. (Other dashboard columns - Description, latest release, last commit - are pulled from GitHub directly, not from this file. The Description column specifically uses the GitHub repo description.) The schema is owned by the dashboard repo (`nebari-dev/software-pack-dashboard/schema/pack-metadata.schema.json`) and may be validated locally:
 
 ```sh
-check-jsonschema --schemafile schema/pack-metadata.schema.json pack-metadata.yaml
+check-jsonschema \
+  --schemafile https://raw.githubusercontent.com/nebari-dev/software-pack-dashboard/main/schema/pack-metadata.schema.json \
+  pack-metadata.yaml
 ```
 
 Key fields the checklist depends on:
@@ -194,6 +196,7 @@ Once `pack-metadata.yaml` is populated and the pack is in `tracked-packs.yaml`, 
 - **`no-product-owner`** — at GA but `product_owner` is null
 - **`metadata-missing`** / **`metadata-invalid`** — the file is missing or fails schema validation
 - **`repo-not-found`** — the pack repo could not be reached at all
+- **`deprecated`** — pack is marked `deprecated: true`; it also moves to the Deprecated packs table
 
 These are visibility flags, not formal blockers, but a pack with persistent flags is signaling that something in this checklist has decayed. Tech lead reviews flags weekly.
 
