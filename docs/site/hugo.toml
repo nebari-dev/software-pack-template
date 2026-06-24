@@ -38,8 +38,11 @@ enableGitInfo = true
       label = "Introduction"
       url   = "/"
     [[params.sidebar.items]]
-      label = "Concepts"
-      url   = "/concepts/"
+      label = "What is a software pack"
+      url   = "/what-is-a-software-pack/"
+    [[params.sidebar.items]]
+      label = "Build your own"
+      url   = "/build-your-own/"
 
   [[params.sidebar]]
     heading = "Reference"
