@@ -12,7 +12,7 @@
 
 Every task's requirements implicitly include these:
 
-- **Astro `base` is the static string `/building-a-software-pack/` in every environment** (local dev, PR preview, production). No per-environment base computation.
+- **Astro `base` is dynamic: `process.env.BASE_PATH ?? '/building-a-software-pack/'`.** Production (`main`) uses the subpath (the portal Worker strips `/building-a-software-pack/` before proxying to this Pages project); PR previews build with `BASE_PATH=/` (served at `<alias>.pages.dev/` root, no Worker). Astro emits files at `dist/` **root** in both - `base` only prefixes link/asset URLs, it does not nest output. Default (unset) is the production subpath, so local builds and tests match production.
 - **Content files stay `.md`, never `.mdx`.** `concepts.md` and `nebariapp-crd-reference.md` contain Helm `{{ ... }}` template syntax in fenced code blocks; MDX would parse `{` as JSX and break the build.
 - **`@nebari/starlight` is pinned `^0.1.6`** in Part 2. Part 2 cannot `bun install` until Part 1's v0.1.6 is published to npm (see the Release Gate).
 - Peer/runtime version floors: `astro >=5.0.0 <6.0.0`, `@astrojs/starlight >=0.33.0 <1.0.0`.
@@ -22,17 +22,17 @@ Every task's requirements implicitly include these:
 
 ## Journeys
 
-Copied verbatim from the spec (`docs/superpowers/specs/2026-07-01-template-site-astro-starlight-design.md`). Evidence columns are filled only at the verification gate. A **reader** browses the guide at `packs.nebari.dev/building-a-software-pack/`; a **maintainer** edits the docs and opens a PR.
+Copied from the spec (`docs/superpowers/specs/2026-07-01-template-site-astro-starlight-design.md`). Evidence columns are filled only at the verification gate. A **reader** browses the guide at `packs.nebari.dev/building-a-software-pack/`; a **maintainer** edits the docs and opens a PR. **Revised 2026-07-02** (items 1, 5, 7) for the dynamic-base correction: Astro emits files at `dist/` root (not nested under the base); the Worker strips the prefix in production and previews build with a root base.
 
 | # | Item | Proof | Check method | Evidence |
 |---|------|-------|--------------|----------|
-| 1 | All 7 pages render under the `/building-a-software-pack/` base | Built site emits `dist/building-a-software-pack/index.html` plus a page for each of the 7 content files (`what-is-a-software-pack`, `concepts`, `build-your-own`, `auth-flow`, `nebariapp-crd-reference`, `release-readiness`, and the home); each returns HTTP 200 from local preview and contains its expected `<h1>` | automated: build + a test that globs `dist/**/*.html`, asserts the 7 expected paths exist and each contains its title | *(empty)* |
+| 1 | All 7 pages render, with base-prefixed links | A production-base build emits `dist/index.html` plus `dist/<slug>/index.html` for each of the 7 content files (`what-is-a-software-pack`, `concepts`, `build-your-own`, `auth-flow`, `nebariapp-crd-reference`, `release-readiness`, and the home); each contains its expected title, and its internal links are prefixed with `/building-a-software-pack/` | automated: build + a test that asserts the 7 expected `dist/` paths exist and each contains its title | *(empty)* |
 | 2 | Sidebar shows the 2 groups with `concepts` in the right slot | Rendered sidebar HTML contains both group labels; "Getting Started" lists `What is a software pack` then `Concepts` (new) then `Build your own`; every sidebar `href` resolves to a built page | automated: test parses a built page's sidebar `<nav>`, asserts group labels + ordered links + each href maps to a file in `dist` | *(empty)* |
 | 3 | Internal cross-page links are base-safe (no 404s) | Every internal link in the 7 pages points under `/building-a-software-pack/` and resolves to an emitted file; zero internal links resolve to a path missing from `dist` | automated: test extracts `<a href>` from built pages, filters internal, asserts each target exists in `dist` | *(empty)* |
 | 4 | Nebari branding is applied via `@nebari/starlight` | A built page's CSS resolves `--sl-color-text-accent` to Nebari magenta (oklch hue ~311, not Starlight blue ~264); Poppins is the heading font; the Nebari footer is present; the header logo links to `https://packs.nebari.dev/` | automated: reuse the theme's light-mode-accent assertion against a built page + assert `SiteTitle` anchor href | *(empty)* |
-| 5 | Search works across the guide | After build, a Pagefind bundle exists at `dist/building-a-software-pack/pagefind/`; a query for a term unique to one page (e.g. "NebariApp") returns that page in the Pagefind index | automated: build, then a test that loads the Pagefind index and asserts a known term maps to the expected page | *(empty)* |
+| 5 | Search works across the guide | After build, a Pagefind bundle exists at `dist/pagefind/`; a query for a term unique to one page (e.g. "NebariApp") returns that page in the Pagefind index | automated: build, then a test that loads the Pagefind index and asserts a known term maps to the expected page | *(empty)* |
 | 6 | "Edit this page" links point to the correct GitHub source | A built page's edit link resolves to the file's real path in `nebari-dev/nebari-software-pack-template` on the default branch | automated: test asserts the edit-link href matches `github.com/nebari-dev/nebari-software-pack-template/edit/main/docs/site/src/content/docs/<file>` for a sample page | *(empty)* |
-| 7 | A maintainer's PR gets a working preview deploy | Opening a PR that touches `docs/site/**` triggers `docs.yml`, which builds the Astro site and deploys to Cloudflare Pages; the PR comment deep-links to `<alias>.pages.dev/building-a-software-pack/`; visiting that URL shows the migrated site | narrated: open a test PR, capture the Actions run log + the PR comment + a screenshot of the loaded preview URL | *(empty)* |
+| 7 | A maintainer's PR gets a working preview deploy | Opening a PR that touches `docs/site/**` triggers `docs.yml`, which builds the Astro site with a root base (`BASE_PATH=/`) and deploys to Cloudflare Pages; the PR comment links to the deployment alias root (`<alias>.pages.dev/`); visiting that URL shows the migrated site with working nav | narrated: open a test PR, capture the Actions run log + the PR comment + a screenshot of the loaded preview URL | *(empty)* |
 | 8 | Production serves at `packs.nebari.dev/building-a-software-pack/` on merge to main | After merge, `docs.yml` deploys to the production Cloudflare branch; the live URL returns the migrated Starlight home and a spot-checked inner page | narrated: capture the post-merge Actions run + `curl`/screenshot of the live home and one inner page | *(empty)* |
 
 **Journey check-method note (item 5):** a literal "load the Pagefind binary index and resolve a term to a page" is not feasible in pure Node (fragments/indexes are compressed). The automated task below implements the strongest deterministic proxy: assert the Pagefind bundle is emitted under the base **and** the unique term is present in the indexed body of the expected page. The interactive query is exercised by the shared theme's own Playwright search e2e. This refinement is flagged to the user at the verification gate.
@@ -268,7 +268,7 @@ Part 2 pins `@nebari/starlight ^0.1.6`, which must exist on npm before `bun inst
 - Test: `docs/site/test/build.test.ts`
 
 **Interfaces:**
-- Produces: a buildable Astro site; `bun run build` (cwd `docs/site`) emits `docs/site/dist/building-a-software-pack/**`.
+- Produces: a buildable Astro site; `bun run build` (cwd `docs/site`) emits pages at `docs/site/dist/` root (`dist/index.html`, `dist/<slug>/index.html`), with link/asset URLs prefixed by the base.
 - Produces: `rehypeBaseLinks({ base })` export (implemented fully in Task 4; a pass-through stub here so the config imports resolve).
 
 **Advances journeys:** 1, 2
@@ -343,10 +343,13 @@ import starlight from '@astrojs/starlight';
 import { nebari } from '@nebari/starlight';
 import { rehypeBaseLinks } from './src/rehype-base-links.mjs';
 
-// Static in every environment (local dev, PR preview, production) so links behave
-// identically everywhere. Production is served at packs.nebari.dev/building-a-software-pack/
-// behind the portal Worker; PR previews live at <alias>.pages.dev/building-a-software-pack/.
-const base = '/building-a-software-pack/';
+// Dynamic base. Production (main) uses the subpath: the portal Worker strips
+// /building-a-software-pack/ before proxying to this Pages project, so files are served
+// from its root. PR previews build with BASE_PATH=/ because they are served at
+// <alias>.pages.dev/ directly (no Worker). Astro emits files at dist/ root either way;
+// base only prefixes link/asset URLs. Default is the production subpath so local
+// builds and tests match production.
+const base = process.env.BASE_PATH ?? '/building-a-software-pack/';
 
 export default defineConfig({
   site: 'https://packs.nebari.dev',
@@ -472,8 +475,7 @@ setDefaultTimeout(180_000);
 
 const SITE = join(import.meta.dir, '..');
 const DIST = join(SITE, 'dist');
-const BASE = 'building-a-software-pack';
-const BASE_DIR = join(DIST, BASE);
+const BASE = '/building-a-software-pack'; // production base (URL prefix), no trailing slash
 
 const TITLES: Record<string, string> = {
   '': 'Building a Software Pack',
@@ -485,8 +487,9 @@ const TITLES: Record<string, string> = {
   'release-readiness': 'Release Readiness',
 };
 
+// Astro emits files at dist/ root (base only prefixes URLs, it does not nest output).
 function pagePath(slug: string): string {
-  return slug === '' ? join(BASE_DIR, 'index.html') : join(BASE_DIR, slug, 'index.html');
+  return slug === '' ? join(DIST, 'index.html') : join(DIST, slug, 'index.html');
 }
 function readPage(slug: string): string {
   return readFileSync(pagePath(slug), 'utf8');
@@ -521,11 +524,13 @@ beforeAll(async () => {
 });
 
 // Journey 1
-test('all 7 pages render under the base with their titles', () => {
+test('all 7 pages render at dist root with titles and base-prefixed links', () => {
   for (const [slug, title] of Object.entries(TITLES)) {
     expect(existsSync(pagePath(slug))).toBe(true);
     expect(readPage(slug)).toContain(title);
   }
+  // Nav links carry the production base prefix (Starlight prepends base to nav).
+  expect(readPage('')).toContain(`href="${BASE}/`);
 });
 
 // Journey 2
@@ -539,14 +544,14 @@ test('sidebar has both groups with Concepts in the Getting Started slot', () => 
     'nebariapp-crd-reference', 'auth-flow', 'release-readiness',
   ];
   for (const slug of links) {
-    const href = slug === '' ? `/${BASE}/` : `/${BASE}/${slug}/`;
+    const href = slug === '' ? `${BASE}/` : `${BASE}/${slug}/`;
     expect(html).toContain(`href="${href}"`);
     expect(existsSync(pagePath(slug))).toBe(true);
   }
   // Order within Getting Started: What is a software pack -> Concepts -> Build your own.
-  const idxWhat = html.indexOf(`href="/${BASE}/what-is-a-software-pack/"`);
-  const idxConcepts = html.indexOf(`href="/${BASE}/concepts/"`);
-  const idxBuild = html.indexOf(`href="/${BASE}/build-your-own/"`);
+  const idxWhat = html.indexOf(`href="${BASE}/what-is-a-software-pack/"`);
+  const idxConcepts = html.indexOf(`href="${BASE}/concepts/"`);
+  const idxBuild = html.indexOf(`href="${BASE}/build-your-own/"`);
   expect(idxConcepts).toBeGreaterThan(idxWhat);
   expect(idxBuild).toBeGreaterThan(idxConcepts);
 });
@@ -671,7 +676,7 @@ Expected: PASS (all 5).
 
 ```ts
 // Journey 3
-test('every internal link in the built pages is base-safe and resolves', () => {
+test('every internal link is base-prefixed and resolves to a file at dist root', () => {
   const hrefRe = /(?:href|src)="([^"]+)"/g;
   for (const file of allHtmlFiles()) {
     const html = readFileSync(file, 'utf8');
@@ -679,14 +684,15 @@ test('every internal link in the built pages is base-safe and resolves', () => {
     while ((m = hrefRe.exec(html)) !== null) {
       const url = m[1];
       if (!url.startsWith('/') || url.startsWith('//')) continue; // external / protocol-relative
-      // Internal links must live under the base.
-      expect(url.startsWith(`/${BASE}/`) || url === `/${BASE}`).toBe(true);
-      // ...and resolve to an emitted file.
-      const clean = url.split('#')[0].split('?')[0].replace(/\/$/, '');
+      // Internal links must carry the production base prefix.
+      expect(url === BASE || url.startsWith(`${BASE}/`)).toBe(true);
+      // Strip the base prefix (the Worker does this in prod), then resolve at dist root.
+      const afterBase = url.slice(BASE.length); // '' | '/auth-flow/' | '/_astro/x.css'
+      const clean = afterBase.split('#')[0].split('?')[0].replace(/\/$/, '');
       const rel = clean.replace(/^\//, '');
-      const asDir = join(DIST, rel, 'index.html');
+      const asIndex = rel === '' ? join(DIST, 'index.html') : join(DIST, rel, 'index.html');
       const asFile = join(DIST, rel);
-      expect(existsSync(asDir) || existsSync(asFile)).toBe(true);
+      expect(existsSync(asIndex) || existsSync(asFile)).toBe(true);
     }
   }
 });
@@ -724,7 +730,9 @@ git commit -m "feat: make Markdown body links base-safe via a rehype pass"
 test('Nebari branding: magenta accent, Poppins, footer, portal logo link', () => {
   const home = readPage('');
   // Logo returns users to the portal (the logoHref option from Part 1).
-  expect(home).toMatch(/<a[^>]*href="https:\/\/packs\.nebari\.dev\/"[^>]*class="nbr-site-title"/);
+  // NOTE: match `nbr-site-title\b` (word boundary), NOT `nbr-site-title"` - Astro appends a
+  // scoped-style hash class, so the rendered attribute is `class="nbr-site-title astro-XXXX"`.
+  expect(home).toMatch(/<a[^>]*href="https:\/\/packs\.nebari\.dev\/"[^>]*class="nbr-site-title\b/);
   // Branded footer marker.
   expect(home).toContain('data-nebari-footer');
   const css = allCss();
@@ -740,7 +748,7 @@ test('Nebari branding: magenta accent, Poppins, footer, portal logo link', () =>
 ```ts
 // Journey 5
 test('Pagefind search bundle is emitted and the unique term is indexable', () => {
-  const pf = join(BASE_DIR, 'pagefind');
+  const pf = join(DIST, 'pagefind'); // bundle sits at dist root, like every other page
   expect(existsSync(join(pf, 'pagefind.js'))).toBe(true);
   expect(existsSync(join(pf, 'pagefind-entry.json'))).toBe(true);
   // "NebariApp" is present in the indexed body of the CRD reference page.
@@ -782,7 +790,7 @@ git commit -m "test: verify branding, search bundle, and edit links"
 
 **Interfaces:**
 - Consumes: `docs/site/` Astro project, build output `docs/site/dist`.
-- Produces: a workflow that builds with Bun/Astro, deploys `docs/site/dist` to the same Cloudflare project, and comments a preview URL deep-linked to the subpath.
+- Produces: a workflow that computes `BASE_PATH` per environment, builds with Bun/Astro, deploys `docs/site/dist` to the same Cloudflare project, and comments the deployment alias root URL.
 
 **Advances journeys:** 7, 8
 
@@ -804,7 +812,7 @@ concurrency:
   group: docs-${{ github.ref }}
   cancel-in-progress: true
 env:
-  # Route slug on the portal; also the Astro base and the preview deep-link path.
+  # Route slug on the portal; also the production Astro base path (/building-a-software-pack/).
   PACK_SLUG: building-a-software-pack
   # CF project name differs from the route slug for the template guide.
   CF_PROJECT: nebari-software-pack-template
@@ -817,24 +825,27 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install
-        run: cd docs/site && bun install --frozen-lockfile
-
-      - name: Build
-        # Astro `base` is static (/building-a-software-pack/), set in astro.config.mjs.
-        run: cd docs/site && bun run build
-
-      - name: Compute deploy branch
+      - name: Compute base path and deploy branch
         id: cf
         env:
           GH_REF: ${{ github.ref }}
           GH_HEAD_REF: ${{ github.head_ref || github.ref_name }}
         run: |
           if [ "$GH_REF" = "refs/heads/main" ]; then
+            echo "base_path=/${PACK_SLUG}/" >> "$GITHUB_OUTPUT"
             echo "branch=main" >> "$GITHUB_OUTPUT"
           else
+            # PR previews serve at the pages.dev alias root (no Worker), so build at root base.
+            echo "base_path=/" >> "$GITHUB_OUTPUT"
             echo "branch=${GH_HEAD_REF}" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Install
+        run: cd docs/site && bun install --frozen-lockfile
+
+      - name: Build
+        # Dynamic base: subpath on main, root on PR previews (astro.config reads BASE_PATH).
+        run: cd docs/site && BASE_PATH="${{ steps.cf.outputs.base_path }}" bun run build
 
       # Fork PRs cannot read secrets; skip deploy there (build above still gates).
       - name: Deploy to Cloudflare Pages
@@ -853,7 +864,7 @@ jobs:
           comment-tag: docs-preview
           message: |
             📄 **Docs preview** for `${{ github.event.pull_request.head.ref }}`:
-            ${{ steps.deploy.outputs.pages-deployment-alias-url }}/${{ env.PACK_SLUG }}/
+            ${{ steps.deploy.outputs.pages-deployment-alias-url }}
 ```
 
 - [ ] **Step 2: Validate the workflow YAML locally**
@@ -864,7 +875,7 @@ Expected: `ok`. (If `actionlint` is installed, also run `actionlint .github/work
 - [ ] **Step 3: Confirm a clean production-parity build**
 
 Run: `cd /home/chuck/devel/nebari-software-pack-template/docs/site && rm -rf dist .astro && bun run build`
-Expected: build succeeds; `docs/site/dist/building-a-software-pack/index.html` exists.
+Expected: build succeeds (default base = production subpath); `docs/site/dist/index.html` exists and its internal links are prefixed with `/building-a-software-pack/`.
 
 - [ ] **Step 4: Commit**
 
@@ -874,7 +885,7 @@ git add .github/workflows/docs.yml
 git commit -m "ci: build docs with Bun/Astro and deploy site/dist"
 ```
 
-**Journeys 7 and 8 are narrated and verified at the gate:** open a PR (capture the Actions run, the preview-URL comment, and a screenshot of the loaded `<alias>.pages.dev/building-a-software-pack/`), and after merge capture the production run plus the live `packs.nebari.dev/building-a-software-pack/` home and one inner page.
+**Journeys 7 and 8 are narrated and verified at the gate:** open a PR (capture the Actions run, the preview-URL comment, and a screenshot of the loaded `<alias>.pages.dev/` root), and after merge capture the production run plus the live `packs.nebari.dev/building-a-software-pack/` home and one inner page.
 
 ---
 
@@ -882,14 +893,14 @@ git commit -m "ci: build docs with Bun/Astro and deploy site/dist"
 
 **Spec coverage:**
 - `@nebari/starlight` `logoHref` + release -> Task 1, 2, Release Gate. ✓
-- Astro project at `docs/site`, static base, `.md` files, `_index.md`->`index.md`, `+++`->`---` -> Task 3. ✓
+- Astro project at `docs/site`, dynamic base (files at dist root), `.md` files, `_index.md`->`index.md`, `+++`->`---` -> Task 3. ✓
 - Explicit 2-group sidebar with `concepts` added -> Task 3 (config) + Task 3 Step 10 (test). ✓
 - Base-safe links via rehype -> Task 4. ✓
 - Branding, search, edit links -> Task 5. ✓
-- CI swap Hugo->Bun/Astro, deploy `dist`, PR comment deep-link -> Task 6. ✓
+- CI swap Hugo->Bun/Astro, per-env `BASE_PATH`, deploy `dist`, PR comment (alias root) -> Task 6. ✓
 - Out of scope (dashboard mergeIndex, starlight-versions, scaffold extraction) -> not planned, correct. ✓
 - All 8 journeys map to a task (1,2->T3; 3->T4; 4,5,6->T5; 7,8->T6; 4 enabled by T1). ✓
 
 **Placeholder scan:** the only "stub" is the Task-3 rehype pass-through, explicitly replaced with full code in Task 4. No TBD/TODO. ✓
 
-**Type/name consistency:** `rehypeBaseLinks({ base })` signature identical in stub (T3), impl (T4), and config import (T3). `nebari({ logoHref })` matches `NebariThemeOptions`. `virtual:nebari/config` export name `logoHref` matches the `.d.ts` and the `SiteTitle.astro` import. Test helpers (`readPage`, `allHtmlFiles`, `allCss`, `BASE`, `BASE_DIR`) defined in T3 and reused in T4/T5. ✓
+**Type/name consistency:** `rehypeBaseLinks({ base })` signature identical in stub (T3), impl (T4), and config import (T3). `nebari({ logoHref })` matches `NebariThemeOptions`. `virtual:nebari/config` export name `logoHref` matches the `.d.ts` and the `SiteTitle.astro` import. Test helpers (`readPage`, `pagePath`, `allHtmlFiles`, `allCss`, `BASE`) defined in T3 and reused in T4/T5; `BASE` is the URL prefix `/building-a-software-pack` and files resolve at `dist/` root. ✓

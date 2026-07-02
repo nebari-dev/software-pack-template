@@ -73,14 +73,17 @@ The template then pins `@nebari/starlight: ^0.1.6` and passes `logoHref: 'https:
 Starlight prepends `base` to sidebar `link` values automatically.
 
 **Base handling (the crux of "base-safe links").**
-- Astro's `base` is **static**: `/building-a-software-pack/` in every environment (local dev, PR preview, production). This mirrors production paths exactly, so links behave identically everywhere and the workflow needs no baseURL computation. Cost: a PR preview's site root (`<alias>.pages.dev/`) 404s; the PR comment must deep-link to `<alias>.pages.dev/building-a-software-pack/`.
+- Astro's `base` is **dynamic**, resolved from `process.env.BASE_PATH` with a default of `/building-a-software-pack/`. This mirrors the proven Hugo model and is forced by how the portal Worker routes: `worker/src/router.js` (in the dashboard repo) strips the leading `/building-a-software-pack/` segment and proxies the rest to `nebari-software-pack-template.pages.dev`, so the Pages project must serve files at its root. Astro `base` prefixes link/asset URLs but does **not** nest the physical `dist/` output (files stay at `dist/` root; verified against the config reference and the theme's own base-path test). Therefore:
+  - **Production (`main`):** base `/building-a-software-pack/`. Files at `dist/` root; body/nav links are prefixed with the subpath. The Worker strips the prefix, so `packs.nebari.dev/building-a-software-pack/auth-flow/` -> Pages `/auth-flow/`.
+  - **PR preview:** base `/` (workflow sets `BASE_PATH=/`). Served at `<alias>.pages.dev/` directly (no Worker), so links must be root-relative. Files at `dist/` root.
+  - Default (unset) is the production subpath, so local `bun run dev` / `bun run build` / tests match production.
 - Confirmed against official docs: **Astro does not auto-prepend `base` to root-absolute Markdown links.** The Astro config reference documents `base` affecting only asset imports and `import.meta.env.BASE_URL`; the Markdown guide says nothing about link rewriting; Starlight's authoring guide only shows a bare `/getting-started/` example (valid only at root). So the 13 existing `/foo/` body links need an explicit mechanism.
 - **Mechanism: a small rehype plugin** (`markdown.rehypePlugins` in `astro.config.mjs`) that prepends `base` to internal root-absolute `<a href>` / `<img src>` values (leaving external `//`, `http(s):`, `mailto:`, and in-page `#` links alone; collapsing duplicate slashes). The plugin is a pure factory taking the `base` constant. This preserves "maintainers write natural `/foo/` Markdown" and is testable in isolation. Body-link resolution is verified end-to-end by the build-time link check (journey 3).
   - Alternative considered and rejected: rewriting all body links to relative (`../auth-flow/`). Base-agnostic, but fragile under hierarchy changes, awkward with anchors, and pushes a rule onto maintainers. The rehype plugin keeps content clean.
 
 **Theme + branding.** `starlight({ plugins: [nebari({ logoHref: 'https://packs.nebari.dev/' })], ... })`. The theme supplies colors, fonts, logo (light/dark), Head, and footer. No local CSS needed unless a specific gap appears.
 
-**Search.** Starlight's default Pagefind. A `dist/building-a-software-pack/pagefind/` bundle is produced by the build. Registering this bundle in the dashboard's multisite `mergeIndex` is **out of scope** here (tracked as a follow-up in the dashboard repo).
+**Search.** Starlight's default Pagefind. A `dist/pagefind/` bundle is produced by the build (at `dist/` root, like every other page). Registering this bundle in the dashboard's multisite `mergeIndex` is **out of scope** here (tracked as a follow-up in the dashboard repo).
 
 **Edit links.** `editLink.baseUrl = https://github.com/nebari-dev/nebari-software-pack-template/edit/main/docs/site/src/content/docs/` (updated for the new content path). Starlight appends the per-page file path.
 
@@ -88,24 +91,25 @@ Starlight prepends `base` to sidebar `link` values automatically.
 
 **CI workflow (`docs.yml`) rewrite.** Keep the trigger (`push` to main + `pull_request`, path filter `docs/site/**`, `workflow_dispatch`), the concurrency group, the `pull-requests: write` permission, the Cloudflare project/env vars, the fork-PR deploy skip, and the PR-comment step. Change:
 - Replace `setup-go` + `actions-hugo` with `oven-sh/setup-bun` (+ `setup-node` `lts/*` if needed by tooling).
-- Build: `cd docs/site && bun install --frozen-lockfile && bun run build` (static `base`, no `--baseURL`). Drop the "Compute baseURL" step entirely; keep only a `branch` value for the Cloudflare deploy (main vs head ref).
+- Compute `BASE_PATH` per environment: `main` -> `/building-a-software-pack/`, PR -> `/`. Also keep a `branch` value for the Cloudflare deploy (main vs head ref).
+- Build: `cd docs/site && bun install --frozen-lockfile && BASE_PATH=<computed> bun run build`.
 - Deploy: `pages deploy docs/site/dist` (was `docs/site/public`).
-- PR comment: deep-link to `<preview-alias>/building-a-software-pack/` (append the subpath to the deployment alias URL).
+- PR comment: link to the deployment alias URL root (`<alias>.pages.dev/`), since previews build with a root base.
 - Bump pinned actions off Node-20-deprecated majors where a newer major exists (e.g. `actions/checkout@v5`); keep `wrangler-action` and the comment action at their current latest majors, verified at implementation time.
 
 ## Journeys
 
-A **reader** browses the guide at `packs.nebari.dev/building-a-software-pack/`. A **maintainer** edits the docs and opens a PR. (Accepted 2026-07-01; item 7 preview URL reflects the static-base decision.)
+A **reader** browses the guide at `packs.nebari.dev/building-a-software-pack/`. A **maintainer** edits the docs and opens a PR. (Accepted 2026-07-01. Revised 2026-07-02: items 1, 5, 7 updated for the dynamic-base correction - Astro emits files at `dist/` root, not nested under the base; the Worker strips the prefix in production and PR previews build with a root base.)
 
 | # | Item | Proof | Check method | Evidence |
 |---|------|-------|--------------|----------|
-| 1 | All 7 pages render under the `/building-a-software-pack/` base | Built site emits `dist/building-a-software-pack/index.html` plus a page for each of the 7 content files (`what-is-a-software-pack`, `concepts`, `build-your-own`, `auth-flow`, `nebariapp-crd-reference`, `release-readiness`, and the home); each returns HTTP 200 from local preview and contains its expected `<h1>` | automated: build + a test that globs `dist/**/*.html`, asserts the 7 expected paths exist and each contains its title | *(empty)* |
+| 1 | All 7 pages render, with base-prefixed links | A production-base build emits `dist/index.html` plus `dist/<slug>/index.html` for each of the 7 content files (`what-is-a-software-pack`, `concepts`, `build-your-own`, `auth-flow`, `nebariapp-crd-reference`, `release-readiness`, and the home); each contains its expected title, and its internal links are prefixed with `/building-a-software-pack/` | automated: build + a test that asserts the 7 expected `dist/` paths exist and each contains its title | *(empty)* |
 | 2 | Sidebar shows the 2 groups with `concepts` in the right slot | Rendered sidebar HTML contains both group labels; "Getting Started" lists `What is a software pack` then `Concepts` (new) then `Build your own`; every sidebar `href` resolves to a built page | automated: test parses a built page's sidebar `<nav>`, asserts group labels + ordered links + each href maps to a file in `dist` | *(empty)* |
 | 3 | Internal cross-page links are base-safe (no 404s) | Every internal link in the 7 pages points under `/building-a-software-pack/` and resolves to an emitted file; zero internal links resolve to a path missing from `dist` | automated: test extracts `<a href>` from built pages, filters internal, asserts each target exists in `dist` | *(empty)* |
 | 4 | Nebari branding is applied via `@nebari/starlight` | A built page's CSS resolves `--sl-color-text-accent` to Nebari magenta (oklch hue ~311, not Starlight blue ~264); Poppins is the heading font; the Nebari footer is present; the header logo links to `https://packs.nebari.dev/` | automated: reuse the theme's light-mode-accent assertion against a built page + assert `SiteTitle` anchor href | *(empty)* |
-| 5 | Search works across the guide | After build, a Pagefind bundle exists at `dist/building-a-software-pack/pagefind/`; a query for a term unique to one page (e.g. "NebariApp") returns that page in the Pagefind index | automated: build, then a test that loads the Pagefind index and asserts a known term maps to the expected page | *(empty)* |
+| 5 | Search works across the guide | After build, a Pagefind bundle exists at `dist/pagefind/`; a query for a term unique to one page (e.g. "NebariApp") returns that page in the Pagefind index | automated: build, then a test that loads the Pagefind index and asserts a known term maps to the expected page | *(empty)* |
 | 6 | "Edit this page" links point to the correct GitHub source | A built page's edit link resolves to the file's real path in `nebari-dev/nebari-software-pack-template` on the default branch | automated: test asserts the edit-link href matches `github.com/nebari-dev/nebari-software-pack-template/edit/main/docs/site/src/content/docs/<file>` for a sample page | *(empty)* |
-| 7 | A maintainer's PR gets a working preview deploy | Opening a PR that touches `docs/site/**` triggers `docs.yml`, which builds the Astro site and deploys to Cloudflare Pages; the PR comment deep-links to `<alias>.pages.dev/building-a-software-pack/`; visiting that URL shows the migrated site | narrated: open a test PR, capture the Actions run log + the PR comment + a screenshot of the loaded preview URL | *(empty)* |
+| 7 | A maintainer's PR gets a working preview deploy | Opening a PR that touches `docs/site/**` triggers `docs.yml`, which builds the Astro site with a root base (`BASE_PATH=/`) and deploys to Cloudflare Pages; the PR comment links to the deployment alias root (`<alias>.pages.dev/`); visiting that URL shows the migrated site with working nav | narrated: open a test PR, capture the Actions run log + the PR comment + a screenshot of the loaded preview URL | *(empty)* |
 | 8 | Production serves at `packs.nebari.dev/building-a-software-pack/` on merge to main | After merge, `docs.yml` deploys to the production Cloudflare branch; the live URL returns the migrated Starlight home and a spot-checked inner page | narrated: capture the post-merge Actions run + `curl`/screenshot of the live home and one inner page | *(empty)* |
 
 ## Testing strategy
@@ -125,7 +129,7 @@ A **reader** browses the guide at `packs.nebari.dev/building-a-software-pack/`. 
 
 - **Virtual-module API for `logoHref`:** if the intended Astro plugin API differs, fall back to a `vite.define` build-time constant. Either way the value is resolved at build; verified against docs before coding.
 - **Helm `{{ }}` in code fences:** mitigated by staying on `.md` (not `.mdx`); a build smoke over the two files with Helm blocks confirms no parse errors.
-- **Static-base preview root 404:** acceptable and expected; mitigated by the PR comment deep-linking to the subpath.
+- **Base mismatch between environments:** mitigated by the dynamic base (subpath in prod where the Worker strips it, root in previews where there is no Worker) and by building tests with the production base so they exercise the deployed config.
 - **Cross-repo sequencing:** `@nebari/starlight v0.1.6` must publish before the template can pin it; the plan sequences A before C.
 
 ## References (verified 2026-07-01)
