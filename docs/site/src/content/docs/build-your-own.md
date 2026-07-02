@@ -1,7 +1,6 @@
-+++
-title = "Build your own pack"
-weight = 20
-+++
+---
+title: Build your own pack
+---
 
 If a workload you'd like to run on Nebari isn't already in the catalog, you can package it yourself.
 

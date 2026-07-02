@@ -1,6 +1,6 @@
-+++
-title = "Release Readiness"
-+++
+---
+title: Release Readiness
+---
 
 This page defines the maturity levels for Nebari **first-party** software packs and the
 requirements for promoting a pack between levels. It applies only to packs maintained by
