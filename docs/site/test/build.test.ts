@@ -109,3 +109,36 @@ test('every internal link is base-prefixed and resolves to a file at dist root',
     }
   }
 });
+
+// Journey 4
+test('Nebari branding: magenta accent, Poppins, footer, portal logo link', () => {
+  const home = readPage('');
+  // Logo returns users to the portal (the logoHref option from Part 1).
+  // NOTE: match `nbr-site-title\b` (word boundary), NOT `nbr-site-title"` - Astro appends a
+  // scoped-style hash class, so the rendered attribute is `class="nbr-site-title astro-XXXX"`.
+  expect(home).toMatch(/<a[^>]*href="https:\/\/packs\.nebari\.dev\/"[^>]*class="nbr-site-title\b/);
+  // Branded footer marker.
+  expect(home).toContain('data-nebari-footer');
+  const css = allCss();
+  // Accent mapped onto the Nebari primary token (matches the theme's own assertion).
+  expect(css).toMatch(/--sl-color-accent:\s*var\(--nbr-primary\)/);
+  // Heading font is Poppins.
+  expect(css).toMatch(/Poppins/);
+});
+
+// Journey 5
+test('Pagefind search bundle is emitted and the unique term is indexable', () => {
+  const pf = join(DIST, 'pagefind'); // bundle sits at dist root, like every other page
+  expect(existsSync(join(pf, 'pagefind.js'))).toBe(true);
+  expect(existsSync(join(pf, 'pagefind-entry.json'))).toBe(true);
+  // "NebariApp" is present in the indexed body of the CRD reference page.
+  expect(readPage('nebariapp-crd-reference')).toContain('NebariApp');
+});
+
+// Journey 6
+test('edit links point to the correct GitHub source file', () => {
+  const html = readPage('auth-flow');
+  expect(html).toContain(
+    'https://github.com/nebari-dev/nebari-software-pack-template/edit/main/docs/site/src/content/docs/auth-flow.md',
+  );
+});
