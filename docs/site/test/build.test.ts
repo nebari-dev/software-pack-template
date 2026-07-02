@@ -123,7 +123,7 @@ test('Nebari branding: magenta accent, Poppins, footer, portal logo link', () =>
   // Accent mapped onto the Nebari primary token (matches the theme's own assertion).
   expect(css).toMatch(/--sl-color-accent:\s*var\(--nbr-primary\)/);
   // Heading font is Poppins.
-  expect(css).toMatch(/Poppins/);
+  expect(css).toMatch(/--nbr-font-heading:\s*["']?Poppins/);
 });
 
 // Journey 5

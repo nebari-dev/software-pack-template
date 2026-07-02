@@ -25,8 +25,5 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Hugo build lock (leftover; Astro uses docs/site/public/ as a static-source dir)
-docs/site/.hugo_build.lock
-
 # Claude
 CLAUDE.md
