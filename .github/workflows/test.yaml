@@ -10,7 +10,7 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Create kind cluster
         uses: helm/kind-action@v1
@@ -18,7 +18,7 @@ jobs:
           cluster_name: pack-test
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
 
       # Test vanilla YAML example
       - name: Apply vanilla-yaml manifests

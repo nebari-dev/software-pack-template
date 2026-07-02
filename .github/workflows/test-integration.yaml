@@ -19,10 +19,10 @@ jobs:
       OPERATOR_REF: v0.1.0-alpha.19
     steps:
       - name: Checkout software-pack-template
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Checkout nebari-operator (for dev/scripts)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: nebari-dev/nebari-operator
           ref: ${{ env.OPERATOR_REF }}
@@ -34,7 +34,7 @@ jobs:
           cluster_name: pack-integration
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
 
       # ============================================================
       # Infrastructure: MetalLB

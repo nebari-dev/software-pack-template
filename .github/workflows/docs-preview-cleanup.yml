@@ -30,8 +30,20 @@ jobs:
         run: |
           set -euo pipefail
           base="https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects/${CF_PROJECT}/deployments"
-          ids=$(curl -fsS -H "Authorization: Bearer ${CF_API_TOKEN}" "${base}?env=preview&per_page=100" \
-            | jq -r --arg b "$BRANCH" '.result[] | select(.deployment_trigger.metadata.branch == $b) | .id')
+          # Collect this branch's preview deployment ids. Page through results:
+          # the endpoint rejects an oversized per_page with HTTP 400, so use the
+          # default page size and paginate until a page comes back empty.
+          ids=""
+          page=1
+          while :; do
+            resp=$(curl -fsS -H "Authorization: Bearer ${CF_API_TOKEN}" "${base}?env=preview&page=${page}")
+            count=$(printf '%s' "$resp" | jq '.result | length')
+            [ "$count" -eq 0 ] && break
+            match=$(printf '%s' "$resp" | jq -r --arg b "$BRANCH" '.result[] | select(.deployment_trigger.metadata.branch == $b) | .id')
+            [ -n "$match" ] && ids="${ids}${match}"$'\n'
+            page=$((page + 1))
+            [ "$page" -gt 100 ] && break
+          done
           if [ -z "$ids" ]; then
             echo "No preview deployments found for branch '$BRANCH'."
             exit 0
