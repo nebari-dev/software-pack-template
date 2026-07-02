@@ -1,7 +1,6 @@
-+++
-title = "What is a software pack"
-weight = 10
-+++
+---
+title: What is a software pack
+---
 
 A software pack is a self-contained, installable artifact published to a git repository that delivers a specific capability to a Nebari cluster - a chat assistant, a BI dashboard, a model-serving stack, and so on. Once installed, a pack is automatically wired into the platform's login, routing, and TLS systems.
 

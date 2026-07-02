@@ -1,6 +1,6 @@
-+++
-title = "NebariApp CRD Reference"
-+++
+---
+title: NebariApp CRD Reference
+---
 
 Complete field-by-field reference for the NebariApp custom resource.
 

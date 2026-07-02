@@ -1,6 +1,6 @@
-+++
-title = "Building a Software Pack"
-+++
+---
+title: Building a Software Pack
+---
 
 This guide covers Nebari Software Packs: what they are, how to build one, and how to maintain it.
 

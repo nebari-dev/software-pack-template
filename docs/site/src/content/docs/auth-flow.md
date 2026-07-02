@@ -1,6 +1,6 @@
-+++
-title = "Authentication Flow"
-+++
+---
+title: Authentication Flow
+---
 
 Detailed explanation of how OIDC authentication works for Nebari Software Packs.
 

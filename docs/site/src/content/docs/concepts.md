@@ -1,6 +1,6 @@
-+++
-title = "Concepts"
-+++
+---
+title: Concepts
+---
 
 This section explains the key concepts behind Nebari Software Packs and the
 deployment methods the template supports.
