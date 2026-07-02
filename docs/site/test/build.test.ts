@@ -87,3 +87,25 @@ test('sidebar has both groups with Concepts in the Getting Started slot', () => 
   expect(idxConcepts).toBeGreaterThan(idxWhat);
   expect(idxBuild).toBeGreaterThan(idxConcepts);
 });
+
+// Journey 3
+test('every internal link is base-prefixed and resolves to a file at dist root', () => {
+  const hrefRe = /(?:href|src)="([^"]+)"/g;
+  for (const file of allHtmlFiles()) {
+    const html = readFileSync(file, 'utf8');
+    let m: RegExpExecArray | null;
+    while ((m = hrefRe.exec(html)) !== null) {
+      const url = m[1];
+      if (!url.startsWith('/') || url.startsWith('//')) continue; // external / protocol-relative
+      // Internal links must carry the production base prefix.
+      expect(url === BASE || url.startsWith(`${BASE}/`)).toBe(true);
+      // Strip the base prefix (the Worker does this in prod), then resolve at dist root.
+      const afterBase = url.slice(BASE.length); // '' | '/auth-flow/' | '/_astro/x.css'
+      const clean = afterBase.split('#')[0].split('?')[0].replace(/\/$/, '');
+      const rel = clean.replace(/^\//, '');
+      const asIndex = rel === '' ? join(DIST, 'index.html') : join(DIST, rel, 'index.html');
+      const asFile = join(DIST, rel);
+      expect(existsSync(asIndex) || existsSync(asFile)).toBe(true);
+    }
+  }
+});
