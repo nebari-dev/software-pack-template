@@ -170,6 +170,7 @@ If "product owner" has not been named for a pack, the tech lead acts as product 
 - `[GA]` Performance and sizing guidance documented
 - `[GA]` Documented upgrade path from the latest pre-1.0 release to 1.0
 - `[GA]` `CHANGELOG.md` exists with notable changes summarized
+- `[GA]` Docs site compliant with the [pack docs requirements](pack-docs-requirements.md), published at `packs.nebari.dev/<slug>/`
 
 ### Examples
 - `[A]` At least one example values file that deploys without modification (other than hostname)
