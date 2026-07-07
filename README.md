@@ -478,6 +478,13 @@ The operator will still provision the OIDC client and store credentials in a Sec
 but won't create a SecurityPolicy. Your app reads the credentials from the Secret
 and handles the OAuth flow itself.
 
+**On private-VPC clusters**, apps that call Keycloak endpoints directly (not just
+reading the IdToken cookie) need split-horizon URL configuration — the app hits
+Keycloak's in-cluster Service for discovery/JWKS while still validating token
+`iss` against the public URL. See
+[Split-horizon backchannel discovery](docs/auth-flow.md#split-horizon-backchannel-discovery-private-vpc-deployments)
+for the pattern and reference implementation.
+
 For more details, see [docs/auth-flow.md](docs/auth-flow.md).
 
 ## Local Development
