@@ -111,7 +111,7 @@ test('every internal link is base-prefixed and resolves to a file at dist root',
 });
 
 // Journey 4
-test('Nebari branding: magenta accent, Poppins, footer, portal logo link', () => {
+test('Nebari branding: magenta accent, Space Grotesk headings, footer, portal logo link', () => {
   const home = readPage('');
   // Logo returns users to the portal (the logoHref option from Part 1).
   // NOTE: match `nbr-site-title\b` (word boundary), NOT `nbr-site-title"` - Astro appends a
@@ -120,10 +120,11 @@ test('Nebari branding: magenta accent, Poppins, footer, portal logo link', () =>
   // Branded footer marker.
   expect(home).toContain('data-nebari-footer');
   const css = allCss();
-  // Accent mapped onto the Nebari primary token (matches the theme's own assertion).
-  expect(css).toMatch(/--sl-color-accent:\s*var\(--nbr-primary\)/);
-  // Heading font is Poppins.
-  expect(css).toMatch(/--nbr-font-heading:\s*["']?Poppins/);
+  // Accent mapped onto the Nebari brand token (a magenta-violet derived from
+  // --nbr-primary; matches the theme's own assertion in v0.2.0's theme.css).
+  expect(css).toMatch(/--sl-color-accent:\s*var\(--nbr-brand\)/);
+  // Heading font is Space Grotesk (v0.2.0 typography; Lora for titles, Inter for body).
+  expect(css).toMatch(/--nbr-font-heading:\s*["']?Space Grotesk/);
 });
 
 // Journey 5
