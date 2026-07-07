@@ -354,6 +354,69 @@ userinfo endpoint and maps them to Superset roles (Admin, Gamma, Public). See it
 [nebari-values.yaml](https://github.com/nebari-dev/nebari-superset-pack/blob/main/examples/nebari-values.yaml)
 for the complete configuration.
 
+## Split-horizon backchannel discovery (private-VPC deployments)
+
+When your pack's backend needs to reach Keycloak's OIDC endpoints itself — for
+token validation, refresh, JWKS fetch, or anything beyond just consuming the
+IdToken cookie Envoy sets — you'll typically configure two URLs:
+
+- **`issuerURL`** — the external Keycloak hostname
+  (e.g. `https://keycloak.example.com/realms/nebari`). Needed because Keycloak
+  stamps this into token `iss` claims, and consumers validate tokens against it.
+- **`discoveryURL`** — the in-cluster Keycloak service URL
+  (e.g. `http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari`).
+  Used to fetch `.well-known/openid-configuration` and JWKS.
+
+**Why split them.** On a private-VPC cluster, in-cluster pods often can't
+(or shouldn't) reach the external Keycloak hostname directly — either because
+there's no egress path, or because the path goes through a TLS-inspecting proxy
+that adds cost and failure modes to every OIDC discovery call. Fetching
+discovery from the in-cluster Keycloak Service is the clean path. Consumers
+still validate token `iss` against the external URL — which matches what
+Keycloak stamps.
+
+**Complementary Keycloak setting.** `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`
+(Keycloak 25+; `KC_HOSTNAME_STRICT_BACKCHANNEL=false` in 22-24) makes Keycloak
+return backchannel URLs (jwks_uri, token_endpoint, etc.) based on how it was
+reached, rather than always returning the `KC_HOSTNAME` value. When set, an
+in-cluster discovery request gets in-cluster URLs back — so the entire
+backchannel handshake stays in-cluster and doesn't require external DNS or
+trust for the gateway cert. Front-channel URLs (authorization_endpoint,
+end_session_endpoint) stay bound to `KC_HOSTNAME` so browser redirects still
+hit the public hostname.
+
+**Chart pattern for pack authors.** Expose sensible defaults so downstream
+operators don't have to hardcode. A minimal reference shape:
+
+```yaml
+# values.yaml
+keycloak:
+  hostname: ""                                                       # public — derives issuerURL
+  serviceHost: "keycloak-keycloakx-http.keycloak.svc.cluster.local:8080"  # in-cluster — derives discoveryURL
+  realm: "nebari"
+
+auth:
+  oidc:
+    issuerURL: ""      # auto-derived from keycloak.hostname if empty
+    discoveryURL: ""   # auto-derived from keycloak.serviceHost + realm if empty
+```
+
+Paired with helper templates that prefer explicit values, then fall back
+through `keycloak.hostname` and `keycloak.serviceHost` in order. See
+[nebari-dev/nebi-pack#34](https://github.com/nebari-dev/nebi-pack/pull/34)
+for a merged reference implementation. The in-cluster default
+(`keycloak-keycloakx-http.keycloak.svc.cluster.local:8080`) matches the
+codecentric/keycloakx Service naming convention that ships with Nebari.
+
+**When this does NOT apply.** If your pack's backend just consumes the
+`IdToken-*` cookie set by Envoy (trusts Envoy's auth entirely and doesn't
+hit Keycloak itself), no discoveryURL is needed at all — the front-channel
+flow documented in [The Flow](#the-flow) is the whole story. Simple
+auth-aware apps and the `enforceAtGateway: true` + gateway-only pattern
+often fall in this category. Backends that manage their own sessions,
+refresh tokens, or userinfo introspection independently need the
+split-horizon pattern above.
+
 ## NebariApp CRD vs Envoy Gateway SecurityPolicy
 
 The fields documented in [nebariapp-crd-reference.md](nebariapp-crd-reference.md) are the
