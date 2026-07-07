@@ -1,4 +1,5 @@
 import { defineConfig } from 'astro/config';
+import { unified } from '@astrojs/markdown-remark';
 import starlight from '@astrojs/starlight';
 import { nebari } from '@nebari/starlight';
 import { rehypeBaseLinks } from './src/rehype-base-links.mjs';
@@ -15,8 +16,11 @@ export default defineConfig({
   site: 'https://packs.nebari.dev',
   base,
   // Astro does not prefix `base` onto root-absolute links written in Markdown body
-  // content, so this rehype pass does it for internal links and images.
-  markdown: { rehypePlugins: [[rehypeBaseLinks, { base }]] },
+  // content, so this rehype pass does it for internal links and images. Astro 7
+  // deprecated the top-level `markdown.rehypePlugins` field in favor of passing the
+  // pipeline to `unified()` from @astrojs/markdown-remark (GFM + SmartyPants stay on
+  // by default).
+  markdown: { processor: unified({ rehypePlugins: [[rehypeBaseLinks, { base }]] }) },
   integrations: [
     starlight({
       title: 'Building a Software Pack',
