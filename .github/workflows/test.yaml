@@ -86,8 +86,8 @@ jobs:
       # Test auth-fastapi Helm example
       - name: Build and load auth-fastapi image
         run: |
-          docker build -t ghcr.io/nebari-dev/nebari-software-pack-template/auth-fastapi-example:latest examples/auth-fastapi/
-          kind load docker-image ghcr.io/nebari-dev/nebari-software-pack-template/auth-fastapi-example:latest --name pack-test
+          docker build -t ghcr.io/nebari-dev/software-pack-template/auth-fastapi-example:latest examples/auth-fastapi/
+          kind load docker-image ghcr.io/nebari-dev/software-pack-template/auth-fastapi-example:latest --name pack-test
 
       - name: Install auth-fastapi chart
         run: |

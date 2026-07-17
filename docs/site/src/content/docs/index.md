@@ -19,4 +19,4 @@ A software pack is a Kubernetes application bundled with a `NebariApp` custom re
 
 ## Pack template
 
-Use the [nebari-software-pack-template](https://github.com/nebari-dev/nebari-software-pack-template) as your starting point. It includes five examples spanning plain YAML, Kustomize, basic Helm, auth-aware apps, and wrapping an existing upstream chart.
+Use the [software-pack-template](https://github.com/nebari-dev/software-pack-template) as your starting point. It includes five examples spanning plain YAML, Kustomize, basic Helm, auth-aware apps, and wrapping an existing upstream chart.

@@ -78,7 +78,7 @@ The container image is pre-built and published to GHCR by CI. You can run it
 locally without building:
 
 ```bash
-docker run -p 8000:8000 ghcr.io/nebari-dev/nebari-software-pack-template/auth-fastapi-example:latest
+docker run -p 8000:8000 ghcr.io/nebari-dev/software-pack-template/auth-fastapi-example:latest
 # Open http://localhost:8000 - shows "Not Authenticated" page
 ```
 

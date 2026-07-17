@@ -5,7 +5,7 @@
 # Application
 # =============================================================================
 image:
-  repository: ghcr.io/nebari-dev/nebari-software-pack-template/auth-fastapi-example
+  repository: ghcr.io/nebari-dev/software-pack-template/auth-fastapi-example
   tag: "latest"
   pullPolicy: IfNotPresent
 

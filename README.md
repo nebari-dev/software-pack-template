@@ -1,8 +1,8 @@
 # Nebari Software Pack Template
 
-[![Lint](https://github.com/nebari-dev/nebari-software-pack-template/actions/workflows/lint.yaml/badge.svg)](https://github.com/nebari-dev/nebari-software-pack-template/actions/workflows/lint.yaml)
-[![Test](https://github.com/nebari-dev/nebari-software-pack-template/actions/workflows/test.yaml/badge.svg)](https://github.com/nebari-dev/nebari-software-pack-template/actions/workflows/test.yaml)
-[![Integration Test](https://github.com/nebari-dev/nebari-software-pack-template/actions/workflows/test-integration.yaml/badge.svg)](https://github.com/nebari-dev/nebari-software-pack-template/actions/workflows/test-integration.yaml)
+[![Lint](https://github.com/nebari-dev/software-pack-template/actions/workflows/lint.yaml/badge.svg)](https://github.com/nebari-dev/software-pack-template/actions/workflows/lint.yaml)
+[![Test](https://github.com/nebari-dev/software-pack-template/actions/workflows/test.yaml/badge.svg)](https://github.com/nebari-dev/software-pack-template/actions/workflows/test.yaml)
+[![Integration Test](https://github.com/nebari-dev/software-pack-template/actions/workflows/test-integration.yaml/badge.svg)](https://github.com/nebari-dev/software-pack-template/actions/workflows/test-integration.yaml)
 
 A template repository for building **Nebari Software Packs** - Kubernetes
 applications that deploy on the [Nebari](https://nebari.dev) platform with
@@ -115,13 +115,13 @@ For local development (optional):
 ## Repository Structure
 
 ```
-nebari-software-pack-template/
+software-pack-template/
   .github/workflows/
-    build-image.yaml             # Build + publish auth-fastapi image to GHCR
+    build-images.yaml            # Build + publish images via reusable pack-build-image
     lint.yaml                    # Manifest validation (all examples)
     test.yaml                    # Integration tests on kind cluster
     test-integration.yaml        # NebariApp integration tests (full stack)
-    release.yaml                 # Helm package + GitHub release + gh-pages index
+    release.yaml                 # Release chart via reusable pack-release workflow
   examples/
     vanilla-yaml/                # Example 1: Plain Kubernetes manifests
       deployment.yaml            # nginx Deployment
@@ -383,7 +383,7 @@ def get_id_token(request: Request) -> str | None:
 
 ```bash
 # Run locally (shows "Not Authenticated" - no IdToken cookie without Envoy Gateway)
-docker run -p 8000:8000 ghcr.io/nebari-dev/nebari-software-pack-template/auth-fastapi-example:latest
+docker run -p 8000:8000 ghcr.io/nebari-dev/software-pack-template/auth-fastapi-example:latest
 
 # Deploy on Nebari with auth
 helm install my-pack examples/auth-fastapi/chart/ \
@@ -539,11 +539,26 @@ Runs on every push and PR. Validates all examples:
 - `kubectl kustomize` for each Kustomize overlay
 - `helm lint` and `helm template` for each Helm chart (both NebariApp enabled and disabled)
 
-### Build Image (`build-image.yaml`)
+### Build Images (`build-images.yaml`)
 
-Runs on pushes to main that modify `examples/auth-fastapi/app/` or the
-`Dockerfile`, plus manual dispatch. Builds and publishes the auth-fastapi
-example image to `ghcr.io/nebari-dev/nebari-software-pack-template/auth-fastapi-example`.
+Calls the shared reusable workflow
+`nebari-dev/.github/.github/workflows/pack-build-image.yaml@v1` to build and
+publish the auth-fastapi example image to GHCR
+(`ghcr.io/nebari-dev/software-pack-template/auth-fastapi-example`) and quay.io,
+tagged `sha-<short>` and `latest`. Runs on pushes to main that modify the
+example's `app/`, `Dockerfile`, or its chart `Chart.yaml` (so the release commit
+produces the sha-pinned image the release workflow references), on pull requests
+(build only, no push), and on manual dispatch.
+
+> **Manual prerequisite (official packs).** The shared workflow does **not**
+> create Quay repositories. Before the first push, a maintainer must create the
+> image's Quay repository under the `nebari` org and grant the CI robot account
+> write access (make it public if the pack is public). For this example that is
+> `quay.io/nebari/software-pack-template-auth-fastapi-example`; in general it is
+> `quay.io/nebari/<repo-name>-<image>`. GHCR repositories are created
+> automatically on first push, so only Quay needs this step. The `QUAY_TOKEN`,
+> `QUAY_USERNAME`, and `NEBARI_HELM_REPO_TOKEN` secrets are provided
+> organizationally to public nebari-dev repos.
 
 ### Test (`test.yaml`)
 
@@ -572,11 +587,16 @@ setup that the standalone test cannot detect.
 
 ### Release (`release.yaml`)
 
-Manual dispatch. Packages and releases a Helm chart:
+Calls the shared reusable workflow
+`nebari-dev/.github/.github/workflows/pack-release.yaml@v1` when the auth-fastapi
+example's `Chart.yaml` version changes on main. The reusable workflow pins the
+chart's image tag to the release commit's sha, packages the chart, creates a
+GitHub Release, and opens a PR in `nebari-dev/helm-repository` (which publishes
+to `quay.io/nebari/charts`).
 
-- Packages the selected chart as a `.tgz`
-- Creates a GitHub release with the package
-- Updates the `gh-pages` branch with a Helm repo index
+This flow works only for official packs in the nebari-dev org: it relies on the
+org's `NEBARI_HELM_REPO_TOKEN` secret and the central `nebari-dev/helm-repository`.
+Forks outside the org must supply their own publishing infrastructure.
 
 ## Deploying to a Nebari Cluster
 

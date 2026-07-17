@@ -103,10 +103,10 @@ jobs:
       # ============================================================
       - name: Build and load auth-fastapi image
         run: |
-          docker build -t ghcr.io/nebari-dev/nebari-software-pack-template/auth-fastapi-example:latest \
+          docker build -t ghcr.io/nebari-dev/software-pack-template/auth-fastapi-example:latest \
             examples/auth-fastapi/
           kind load docker-image \
-            ghcr.io/nebari-dev/nebari-software-pack-template/auth-fastapi-example:latest \
+            ghcr.io/nebari-dev/software-pack-template/auth-fastapi-example:latest \
             --name pack-integration
 
       # ============================================================
