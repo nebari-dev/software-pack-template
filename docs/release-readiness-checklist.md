@@ -197,7 +197,7 @@ If "product owner" has not been named for a pack, the tech lead acts as product 
 - `[B]` `appVersion` in `Chart.yaml` matches the upstream application version being wrapped
 - `[GA]` Chart version is set to `1.0.0` and follows the [version tagging convention](#version-tagging-convention)
 - `[GA]` Custom container images (if any) are published and accessible
-- `[GA]` Helm repo index updates correctly after release
+- `[GA]` Chart syncs to `nebari-dev/helm-repository` and publishes to `quay.io/nebari/charts` after release
 - `[GA]` Upgrade smoke test in CI: `helm install` + `helm upgrade` succeeds without errors
 
 ### Pre-sales Verification

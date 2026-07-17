@@ -12,7 +12,7 @@ If your app already runs on Kubernetes - via Helm, Kustomize, or plain YAML - ad
 
 ## Start from the template
 
-The easiest way to create a pack is the [Software Pack template](https://github.com/nebari-dev/nebari-software-pack-template).
+The easiest way to create a pack is the [Software Pack template](https://github.com/nebari-dev/software-pack-template).
 
 1. Click **Use this template** on the template repository.
 2. Clone your new repo.
