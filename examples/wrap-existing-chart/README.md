@@ -19,7 +19,7 @@ service.
 ```
 Chart.yaml
   dependencies:
-    - name: nebari-app       # Official chart that renders the NebariApp
+    - name: nebari-app       # Official chart that provides the NebariApp template
       repository: oci://quay.io/nebari/charts
     - name: podinfo          # Upstream chart handles pods + services
       version: 6.10.1

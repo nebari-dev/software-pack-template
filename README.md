@@ -282,7 +282,7 @@ To render the NebariApp in a Helm chart with the official
    {{- end }}
    ```
 
-When a value builds text with `{{ ... }}`, add `| toJson` at the end to make it valid JSON:
+When a `{{ ... }}` value renders a string, add `| toJson` at the end. It wraps the string in quotes so it's valid JSON:
 
 ```yaml
 name: '{{ include "my-pack.fullname" . | toJson }}'   # works
@@ -467,7 +467,7 @@ The NebariApp points to podinfo's service from `values.yaml`:
 ```yaml
 nebariapp:
   service:
-    name: '{{ include "my-pack.podinfo-service-name" . | toJson }}'   # Upstream service
+    name: '{{ printf "%s-podinfo" .Release.Name | toJson }}'   # Upstream service
     port: 9898
 ```
 

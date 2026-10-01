@@ -13,10 +13,9 @@ Every software pack has exactly one integration point with the Nebari platform: 
 automatically configures routing, TLS, and authentication.
 
 The NebariApp is just a Kubernetes resource - it can live in a plain YAML file, a
-Kustomize base, or a Helm template. In Helm charts, render it with the official
-[`nebari-app` library chart](https://github.com/nebari-dev/nebari-operator/tree/main/charts/nebari-app),
-which builds it from your values. You typically make it conditional so the chart works
-both standalone and on Nebari:
+Kustomize base, or a Helm template. In Helm charts, render it with the template from the
+official [`nebari-app` library chart](https://github.com/nebari-dev/nebari-operator/tree/main/charts/nebari-app).
+You typically make it conditional so the chart works both standalone and on Nebari:
 
 ```yaml
 {{- if .Values.nebariapp.enabled }}
@@ -91,7 +90,7 @@ nebariapp:
   enabled: false
   hostname: '{{ fail "nebariapp.hostname is required when nebariapp.enabled is true" }}'
   service:
-    name: '{{ include "my-pack.podinfo-service-name" . | toJson }}'   # upstream service name
+    name: '{{ printf "%s-podinfo" .Release.Name | toJson }}'   # upstream service name
     port: 9898
 ```
 
