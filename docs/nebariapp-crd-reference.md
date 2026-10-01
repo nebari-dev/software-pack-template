@@ -350,10 +350,10 @@ A strategic-merge patch only changes the fields it lists, so `routing` from the 
 
 ### Helm
 
-Render the NebariApp with the template from the official
-[`nebari-app` library chart](https://github.com/nebari-dev/nebari-operator/tree/main/charts/nebari-app),
-so the chart works both standalone and on Nebari. Add the dependency to `Chart.yaml` and run
-`helm dependency build`:
+Charts render the NebariApp through the shared `nebari-app.nebariApp` template
+provided by the `nebari-app` chart, instead of hand-writing the manifest.
+
+Add the dependency in `Chart.yaml`, then run `helm dependency build` to fetch it:
 
 ```yaml
 dependencies:
@@ -362,26 +362,11 @@ dependencies:
     version: ">=0.1.1"
 ```
 
-`templates/nebariapp.yaml`:
-
-```yaml
-{{- if .Values.nebariapp.enabled }}
-{{- include "nebari-app.nebariApp" (dict
-    "metadata" (dict
-      "name"      (include "my-pack.fullname" .)
-      "namespace" .Release.Namespace
-      "labels"    (include "my-pack.labels" . | fromYaml)
-    )
-    "spec"   (omit .Values.nebariapp "enabled")
-    "tplCtx" .
-) -}}
-{{- end }}
-```
-
-Everything under `nebariapp:` except `enabled` becomes the NebariApp `spec`. Strings containing
-`{{ ... }}` are rendered with the chart context and must produce valid JSON, so string results
-end in `| toJson`. Required fields are checked after rendering, so an empty string is an error,
-not a request for a default:
+Set any NebariApp `spec` field under `nebariapp:` in `values.yaml`. Everything
+under `nebariapp:` (except `enabled`) is passed through to the NebariApp spec,
+so all fields documented above can be set here. Each `{{ ... }}` value is rendered
+with the chart context and must produce valid JSON, so a template that renders a string
+ends with `| toJson`. Numbers such as the port below don't need it:
 
 ```yaml
 nebariapp:
@@ -400,5 +385,30 @@ nebariapp:
     enabled: false
     provider: keycloak
     provisionClient: true
+    scopes:
+      - openid
+      - profile
+      - email
   gateway: public
 ```
+
+Render the NebariApp in `templates/nebariapp.yaml`. The `if` makes it optional,
+so the chart works both standalone and on Nebari:
+
+```yaml
+{{- if .Values.nebariapp.enabled }}
+{{- include "nebari-app.nebariApp" (dict
+    "metadata" (dict
+      "name"      (include "my-pack.fullname" .)
+      "namespace" .Release.Namespace
+      "labels"    (include "my-pack.labels" . | fromYaml)
+    )
+    "spec"   (omit .Values.nebariapp "enabled")
+    "tplCtx" .
+) -}}
+{{- end }}
+```
+
+`"tplCtx" .` passes the chart context into the template, so the `{{ ... }}`
+values in `values.yaml` are rendered with access to `.Values`, `.Release`, and
+the chart's named templates.
