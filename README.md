@@ -139,7 +139,7 @@ software-pack-template/
         dev/                     # Dev overlay: dev hostname, no auth
           kustomization.yaml
           nebariapp-patch.yaml
-        production/              # Prod overlay: prod hostname, auth + groups
+        production/              # Prod overlay: prod hostname, auth enabled
           kustomization.yaml
           nebariapp-patch.yaml
       README.md
@@ -157,11 +157,13 @@ software-pack-template/
       README.md
     auth-fastapi/                # Example 4: Custom app reading IdToken
       app/
-        main.py                  # FastAPI reading IdToken cookie
+        main.py                  # FastAPI verifying the IdToken cookie
         requirements.txt
         templates/index.html     # User info display
+      tests/                     # pytest suite for the token verification
       Dockerfile
-      chart/                     # Same structure as basic-nginx
+      chart/                     # basic-nginx structure, plus OIDC env wiring
+                                 # and an optional networkpolicy.yaml
       README.md
     wrap-existing-chart/         # Example 5: Wrapping podinfo via Helm
       chart/
@@ -175,6 +177,10 @@ software-pack-template/
       README.md
   dev/
     Makefile                     # Local dev with full Nebari stack on kind
+    configure-operator.sh        # Configures the operator the way NIC does
+    keycloak-route.yaml          # Exposes Keycloak at keycloak.nebari.local
+    verify-nebariapp.sh          # Checks an app is served, not just Ready
+    login-test.sh                # Logs in with curl and checks the app
     .cache/                      # (gitignored) Cloned nebari-operator scripts
   docs/
     nebariapp-crd-reference.md   # Full NebariApp field reference
@@ -208,7 +214,8 @@ spec:
     name: my-pack           # Service name in the same namespace
     port: 80                # Service port (1-65535)
 
-  # Optional: path-based routing rules
+  # Routing: required in practice. Without it the operator creates no
+  # HTTPRoute and no TLS, yet the NebariApp still reports Ready.
   routing:
     routes:
       - pathPrefix: /       # Match all paths (default behavior)
@@ -226,7 +233,7 @@ spec:
       - openid
       - profile
       - email
-    groups:                         # Restrict to specific groups (optional)
+    groups:                         # NOT enforced by the gateway in v0.1.1; see below
       - admin
     enforceAtGateway: true          # Create SecurityPolicy at gateway (default: true)
 
@@ -263,6 +270,11 @@ To render the NebariApp in a Helm chart with the official
      service:
        name: '{{ include "my-pack.fullname" . | toJson }}'
        port: '{{ .Values.service.port }}'
+     routing:
+       routes:
+         - pathPrefix: /
+       tls:
+         enabled: true
    ```
 
 3. Render it in `templates/nebariapp.yaml`. The `if` makes the NebariApp optional,
@@ -362,7 +374,7 @@ kubectl kustomize examples/kustomize-nginx/overlays/dev/
 # Deploy the dev overlay on Nebari
 kubectl apply -k examples/kustomize-nginx/overlays/dev/
 
-# Deploy the production overlay (auth enabled, group-restricted)
+# Deploy the production overlay (auth enabled)
 kubectl apply -k examples/kustomize-nginx/overlays/production/
 ```
 
@@ -404,26 +416,27 @@ See [examples/basic-nginx/README.md](examples/basic-nginx/README.md) for the ful
 ## Example 4: Helm - Auth-Aware Pack (FastAPI)
 
 A custom Python app that reads the IdToken cookie set by Envoy Gateway after
-Keycloak authentication. Shows how to consume authenticated user identity.
+Keycloak authentication. Shows how to consume authenticated user identity safely.
 
 **What it demonstrates:**
 - Building a custom container image
-- Reading the IdToken cookie to get user claims
+- Verifying the IdToken's signature, issuer and audience against Keycloak before
+  trusting any claim (Envoy Gateway does not verify it, and requests can reach the
+  app without passing the gateway)
+- Wiring the client ID and issuer from the operator's OIDC Secret in the chart
+- An optional NetworkPolicy that only lets the Envoy proxies reach the pods
 - Rendering user info (username, email, groups)
 
 The key code in `app/main.py`:
 
 ```python
-def get_id_token(request: Request) -> str | None:
-    """Extract IdToken from Envoy Gateway's OIDC filter cookies.
-
-    Envoy Gateway sets a cookie named IdToken-<suffix> where <suffix>
-    is an 8-char hex string derived from the SecurityPolicy UID.
-    """
-    for name, value in request.cookies.items():
-        if name.startswith("IdToken-"):
-            return value
-    return None
+claims = jwt.decode(
+    token,
+    jwks_client.get_signing_key_from_jwt(token).key,
+    algorithms=["RS256"],
+    audience=CLIENT_ID,   # client-id from <name>-oidc-client
+    issuer=ISSUER,        # issuer-url from <name>-oidc-client
+)
 ```
 
 ```bash
@@ -434,7 +447,8 @@ docker run -p 8000:8000 ghcr.io/nebari-dev/software-pack-template/auth-fastapi-e
 helm dependency build examples/auth-fastapi/chart/
 helm install my-pack examples/auth-fastapi/chart/ \
   --set nebariapp.enabled=true \
-  --set nebariapp.hostname=my-pack.nebari.example.com
+  --set nebariapp.hostname=my-pack.nebari.example.com \
+  --set networkPolicy.enabled=true
 ```
 
 See [examples/auth-fastapi/README.md](examples/auth-fastapi/README.md) for the full walkthrough.
@@ -469,13 +483,18 @@ nebariapp:
   service:
     name: '{{ printf "%s-podinfo" .Release.Name | toJson }}'   # Upstream service
     port: 9898
+  routing:
+    routes:
+      - pathPrefix: /
+    tls:
+      enabled: true
 ```
 
 **You don't rewrite the app. You just connect it to Nebari.**
 
 ```bash
 # Build dependencies
-helm dependency update examples/wrap-existing-chart/chart/
+helm dependency build examples/wrap-existing-chart/chart/
 
 # Deploy standalone
 helm install test-wrap examples/wrap-existing-chart/chart/
@@ -516,10 +535,18 @@ Gateway SecurityPolicy that handles the full OIDC flow:
 - Creates an HTTPRoute directing traffic to your service
 - Provisions a TLS certificate via cert-manager
 
-**What your app can do:**
-- Read the `IdToken-*` cookies to get the JWT (see Example 4)
-- Decode the JWT payload to extract claims: `preferred_username`, `email`, `groups`
-- The JWT signature is already verified by Envoy Gateway - you only need to base64-decode the payload
+**What the operator does not do:**
+- Enforce `auth.groups`. Any user who can log in to the realm reaches the app
+  ([nebari-operator#153](https://github.com/nebari-dev/nebari-operator/issues/153)).
+- Verify the IdToken for your app. Envoy Gateway never checks the JWT signature,
+  and requests can reach the app without passing the gateway: from other pods,
+  and on `routing.publicRoutes` paths, which have no SecurityPolicy.
+
+**What your app must do before trusting an identity:**
+- Read the single `IdToken-*` cookie (see Example 4)
+- Verify its signature against Keycloak's JWKS, and check `iss`, `aud` and `exp`
+- Only then use claims such as `preferred_username`, `email` and `groups`, for
+  example to restrict access to a group
 
 **If your app handles OAuth natively** (like Grafana), set `enforceAtGateway: false`.
 The operator will still provision the OIDC client and store credentials in a Secret,
@@ -535,7 +562,9 @@ The `dev/` directory provides a Makefile for local development with
 creates a kind cluster with the full Nebari infrastructure stack - MetalLB,
 Envoy Gateway, cert-manager, Keycloak, and the nebari-operator - so every
 example deploys with NebariApp enabled, routing, TLS, and authentication
-working just like a real Nebari cluster.
+working just like a real Nebari cluster. The operator is configured the way NIC
+configures it, and Keycloak is exposed at `keycloak.nebari.local`, so the full
+login works locally (user `admin`, password `nebari-admin`).
 
 The first `make up-*` run takes ~5-10 minutes (cluster and infrastructure
 setup). Subsequent runs reuse the existing cluster and are fast.
@@ -558,7 +587,10 @@ make up-podinfo
 # Deploy FastAPI Helm example (auth enabled, uses pre-built GHCR image)
 make up-fastapi
 
-# Update /etc/hosts with NebariApp hostnames
+# Log in to the FastAPI example with curl and check the app verified the token
+make login-test
+
+# Update /etc/hosts with NebariApp and Keycloak hostnames
 make update-hosts
 
 # Delete the kind cluster
@@ -566,8 +598,14 @@ make down
 ```
 
 Each `up-*` target deploys with NebariApp enabled at `https://my-pack.nebari.local`,
-waits for the NebariApp Ready condition, and updates `/etc/hosts` so you can access
-the app in your browser.
+checks that the app is actually served through the Gateway (`RoutingReady`,
+`TLSReady` and a real HTTPS request, not just `Ready`), and updates `/etc/hosts` so
+you can access the app in your browser. Run `make update-hosts` once to add
+`keycloak.nebari.local` too, so the browser can reach the login page. The dev CA is
+self-signed, so expect a certificate warning.
+
+The `/etc/hosts` steps use `sudo`. Everything else works without it:
+`make login-test` and `dev/verify-nebariapp.sh` resolve hostnames themselves.
 
 ### What's not included
 
@@ -586,6 +624,9 @@ Runs on every push and PR. Validates all examples:
 - `kubectl apply --dry-run=client` for the vanilla YAML example
 - `kubectl kustomize` for each Kustomize overlay
 - `helm lint` and `helm template` for each Helm chart (both NebariApp enabled and disabled)
+- Fails if any example chart renders a NebariApp without `spec.routing`
+- Fails if any ArgoCD Application example uses `project: default` (deny-all on NIC)
+- Runs the auth-fastapi token verification tests (`pytest`)
 
 ### Build Images (`build-images.yaml`)
 
@@ -624,11 +665,15 @@ file. Tests each example with `nebariapp.enabled=true` on a full Nebari
 infrastructure stack:
 
 - Creates a kind cluster with MetalLB, Envoy Gateway, cert-manager, and Keycloak
-- Installs the nebari-operator from a pinned release (currently `v0.1.0-alpha.19`)
+- Runs once per operator version: `v0.1.1` (the release these docs track) and
+  `v0.1.0-alpha.20` (what NIC v0.14.0 deploys)
+- Configures the operator the way NIC does (`dev/configure-operator.sh`)
 - Deploys each example with NebariApp enabled and a `*.nebari.local` hostname
-- Verifies NebariApp reaches `Ready` condition (HTTPRoute created, TLS configured)
-- For auth-enabled examples (kustomize production, auth-fastapi), verifies
-  SecurityPolicy is created
+- Verifies `RoutingReady` and `TLSReady`, that the HTTPRoute exists, and that a real
+  HTTPS request through the Gateway succeeds (`dev/verify-nebariapp.sh`)
+- For auth-enabled examples, verifies `AuthReady`, the SecurityPolicy, and the
+  redirect to Keycloak; for auth-fastapi, logs in end to end and checks that forged
+  tokens sent around the gateway are rejected
 
 This catches bugs in NebariApp configuration, operator compatibility, and routing
 setup that the standalone test cannot detect.
@@ -662,7 +707,7 @@ metadata:
   name: my-pack
   namespace: argocd
 spec:
-  project: default
+  project: nebari-apps   # NIC's AppProject for packs; "default" is deny-all
   source:
     repoURL: https://github.com/YOUR-ORG/YOUR-REPO.git
     targetRevision: main
@@ -683,6 +728,11 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+    # The operator only reconciles NebariApps in namespaces labeled
+    # nebari.dev/managed=true. ArgoCD applies this to the namespace it creates.
+    managedNamespaceMetadata:
+      labels:
+        nebari.dev/managed: "true"
 ```
 
 **ArgoCD with Kustomize:**
@@ -694,7 +744,7 @@ metadata:
   name: my-pack
   namespace: argocd
 spec:
-  project: default
+  project: nebari-apps   # NIC's AppProject for packs; "default" is deny-all
   source:
     repoURL: https://github.com/YOUR-ORG/YOUR-REPO.git
     targetRevision: main
@@ -709,6 +759,11 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+    # The operator only reconciles NebariApps in namespaces labeled
+    # nebari.dev/managed=true. ArgoCD applies this to the namespace it creates.
+    managedNamespaceMetadata:
+      labels:
+        nebari.dev/managed: "true"
 ```
 
 **ArgoCD with plain YAML (directory):**
@@ -720,7 +775,7 @@ metadata:
   name: my-pack
   namespace: argocd
 spec:
-  project: default
+  project: nebari-apps   # NIC's AppProject for packs; "default" is deny-all
   source:
     repoURL: https://github.com/YOUR-ORG/YOUR-REPO.git
     targetRevision: main
@@ -736,6 +791,11 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+    # The operator only reconciles NebariApps in namespaces labeled
+    # nebari.dev/managed=true. ArgoCD applies this to the namespace it creates.
+    managedNamespaceMetadata:
+      labels:
+        nebari.dev/managed: "true"
 ```
 
 ### Option B: kubectl apply (plain YAML)
@@ -776,9 +836,12 @@ kubectl describe nebariapp my-pack -n my-pack
 
 # Expected conditions:
 #   RoutingReady: True    - HTTPRoute created
-#   TLSReady: True        - Certificate provisioned
+#   TLSReady: True        - Certificate provisioned (False/ClusterIssuerNotConfigured
+#                           if the operator has no ClusterIssuer; the shared
+#                           wildcard listener still serves HTTPS)
 #   AuthReady: True       - SecurityPolicy created (if auth enabled)
-#   Ready: True           - All components ready
+#   Ready: True           - Core checks passed. Does NOT wait for the others:
+#                           a NebariApp with no routing is Ready and unreachable.
 ```
 
 ## Customizing for Your Own Application
@@ -840,14 +903,15 @@ routing:
 
 ### Restricting access to specific groups
 
-```yaml
-# In the NebariApp spec (any deployment method)
-auth:
-  enabled: true
-  groups:
-    - admin
-    - data-science-team
-```
+`auth.groups` does **not** restrict access in operator v0.1.1. The operator
+creates the groups in Keycloak and lists them on the landing page, but the
+SecurityPolicy it generates has no authorization rule, so every user who can log
+in to the realm reaches the app
+([nebari-operator#153](https://github.com/nebari-dev/nebari-operator/issues/153)).
+
+Until that is fixed, check group membership in your app: verify the IdToken (see
+Example 4 and [docs/auth-flow.md](docs/auth-flow.md)) and reject users whose
+`groups` claim doesn't include the group you need.
 
 ## Troubleshooting
 
@@ -876,7 +940,7 @@ naming convention (usually `<release>-<chart-name>`).
 1. Check that `auth.enabled` is `true` in the NebariApp spec
 2. Check that the nebari-operator is running:
    ```bash
-   kubectl get pods -n nebari-system -l app=nebari-operator
+   kubectl get pods -n nebari-operator-system
    ```
 3. Check the NebariApp conditions:
    ```bash
@@ -884,16 +948,33 @@ naming convention (usually `<release>-<chart-name>`).
    ```
    Look for `AuthReady` condition.
 
+### Every path returns 500 with auth enabled
+
+Envoy Gateway rejected the generated SecurityPolicy. Check its status:
+
+```bash
+kubectl get securitypolicy my-pack-security -n my-pack \
+  -o jsonpath='{range .status.ancestors[*].conditions[*]}{.type}={.status}: {.message}{"\n"}{end}'
+```
+
+`OIDC: error fetching endpoints from issuer` means the operator is pointing Envoy
+Gateway at the wrong in-cluster Keycloak URL. Set `KEYCLOAK_ISSUER_SERVICE_PORT` and
+`KEYCLOAK_ISSUER_CONTEXT_PATH` on the operator Deployment to match your Keycloak
+Service (NIC sets these; `dev/configure-operator.sh` shows the kind equivalent).
+
 ### TLS certificate not provisioning
 
-1. Check cert-manager is running:
+1. Check the `TLSReady` reason. `ClusterIssuerNotConfigured` means the operator has
+   no `TLS_CLUSTER_ISSUER_NAME`; the app is then served by the Gateway's shared
+   listener and certificate.
+2. Check cert-manager is running:
    ```bash
    kubectl get pods -n cert-manager
    ```
-2. Check the Certificate resource:
+3. Check the Certificate resource. Certificates live in the Gateway's namespace:
    ```bash
-   kubectl get certificate -n my-pack
-   kubectl describe certificate my-pack-tls -n my-pack
+   kubectl get certificate -n envoy-gateway-system
+   kubectl describe certificate my-pack-my-pack-cert -n envoy-gateway-system
    ```
 
 ### No IdToken cookie in the app
@@ -905,7 +986,7 @@ naming convention (usually `<release>-<chart-name>`).
    ```
 3. Check Envoy Gateway logs:
    ```bash
-   kubectl logs -n envoy-gateway-system -l app=envoy-gateway
+   kubectl logs -n envoy-gateway-system deploy/envoy-gateway
    ```
 
 ### `missing in charts/ directory: nebari-app`
@@ -916,13 +997,13 @@ The Helm examples depend on the `nebari-app` chart. Fetch it before installing:
 helm dependency build examples/basic-nginx/chart/
 ```
 
-### `helm dependency update` fails
+### `helm dependency build` fails
 
 The dependencies are pulled from OCI registries, so ensure Helm 3.8+ is installed:
 
 ```bash
 helm version
-helm dependency update examples/wrap-existing-chart/chart/
+helm dependency build examples/wrap-existing-chart/chart/
 ```
 
 ## Documentation Portal

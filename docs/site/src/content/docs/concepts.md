@@ -23,6 +23,7 @@ You typically make it conditional so the chart works both standalone and on Neba
     "metadata" (dict
       "name"      (include "my-pack.fullname" .)
       "namespace" .Release.Namespace
+      "labels"    (include "my-pack.labels" . | fromYaml)
     )
     "spec"   (omit .Values.nebariapp "enabled")
     "tplCtx" .
@@ -32,6 +33,10 @@ You typically make it conditional so the chart works both standalone and on Neba
 
 With plain YAML or Kustomize, the NebariApp manifest is always present. When deploying
 standalone, skip that file or exclude it from your apply command.
+
+Whichever method you use, give the NebariApp a `spec.routing` block with at least one
+route. Without it the operator creates no HTTPRoute and no TLS certificate, and the
+NebariApp still reports `Ready`, so the pack deploys cleanly and is unreachable.
 
 ## Deployment methods
 
@@ -62,7 +67,7 @@ overlays/
     nebariapp-patch.yaml      # dev hostname, no auth
   production/
     kustomization.yaml
-    nebariapp-patch.yaml      # prod hostname, auth + groups
+    nebariapp-patch.yaml      # prod hostname, auth enabled
 ```
 
 Best for: packs deployed to multiple environments with known configuration differences.
@@ -92,6 +97,11 @@ nebariapp:
   service:
     name: '{{ printf "%s-podinfo" .Release.Name | toJson }}'   # upstream service name
     port: 9898
+  routing:
+    routes:
+      - pathPrefix: /
+    tls:
+      enabled: true
 ```
 
 `templates/nebariapp.yaml` is the same short `include` shown above. Run
@@ -123,18 +133,11 @@ The simplest possible Helm chart - nginx with a conditional NebariApp template a
 ### Example 4: Helm - Auth-Aware FastAPI
 
 A custom Python app that reads the `IdToken-*` cookie set by Envoy Gateway after
-Keycloak authentication. The key snippet:
-
-```python
-def get_id_token(request: Request) -> str | None:
-    for name, value in request.cookies.items():
-        if name.startswith("IdToken-"):
-            return value
-    return None
-```
-
-Shows how to extract and decode the JWT to get `preferred_username`, `email`, and
-`groups`.
+Keycloak authentication, verifies the JWT's signature, issuer and audience against
+Keycloak, and only then shows `preferred_username`, `email`, and `groups`. Envoy Gateway
+does not verify the token for you, and requests can reach the app without passing the
+gateway, so the verification is not optional. See
+[Reading user identity in your app](/auth-flow/#reading-user-identity-in-your-app).
 
 ### Example 5: Helm - Wrapping an Existing Chart (Podinfo)
 
@@ -155,10 +158,17 @@ cd dev
 make up-vanilla    # deploy vanilla YAML example
 make up-kustomize  # deploy kustomize example (dev overlay)
 make up-basic      # deploy Helm nginx example
+make up-podinfo    # deploy the podinfo wrapper Helm example
 make up-fastapi    # deploy FastAPI Helm example (auth enabled)
-make update-hosts  # update /etc/hosts with NebariApp hostnames
+make login-test    # log in to the FastAPI example with curl
+make update-hosts  # update /etc/hosts with NebariApp and Keycloak hostnames
 make down          # delete the kind cluster
 ```
+
+Each `up-*` target checks that the app is actually served through the Gateway, not just
+that the NebariApp is `Ready`. The cluster configures the operator the way NIC does on a
+real Nebari cluster and exposes Keycloak at `keycloak.nebari.local`, so the full OIDC login
+works locally (user `admin`, password `nebari-admin`).
 
 The first `make up-*` run takes 5-10 minutes (cluster and infrastructure setup).
 Subsequent runs reuse the existing cluster and are fast.
