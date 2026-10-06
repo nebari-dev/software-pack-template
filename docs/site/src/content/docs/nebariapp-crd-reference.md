@@ -294,7 +294,7 @@ spec:
 Charts render the NebariApp through the shared `nebari-app.nebariApp` template
 provided by the `nebari-app` chart, instead of hand-writing the manifest.
 
-Add the dependency in `Chart.yaml`:
+Add the dependency in `Chart.yaml`, then run `helm dependency build` to fetch it:
 
 ```yaml
 dependencies:
@@ -305,8 +305,9 @@ dependencies:
 
 Set any NebariApp `spec` field under `nebariapp:` in `values.yaml`. Everything
 under `nebariapp:` (except `enabled`) is passed through to the NebariApp spec,
-so all fields documented above can be set here. Templated values are quoted and
-end with `| toJson` so they render as valid YAML:
+so all fields documented above can be set here. Each `{{ ... }}` value is rendered
+with the chart context and must produce valid JSON, so a template that renders a string
+ends with `| toJson`. Numbers such as the port below don't need it:
 
 ```yaml
 nebariapp:
@@ -315,6 +316,12 @@ nebariapp:
   service:
     name: '{{ include "my-pack.fullname" . | toJson }}'
     port: '{{ .Values.service.port }}'
+  routing:
+    routes:
+      - pathPrefix: /
+        pathType: PathPrefix
+    tls:
+      enabled: true
   auth:
     enabled: false
     provider: keycloak
