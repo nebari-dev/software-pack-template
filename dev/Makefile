@@ -4,7 +4,7 @@
 # (MetalLB, Envoy Gateway, cert-manager, Keycloak, nebari-operator)
 # so all examples deploy with NebariApp enabled.
 #
-# Prerequisites: docker, kind, helm, kubectl, git
+# Prerequisites: docker, kind, helm, kubectl, git, curl
 #
 # Usage:
 #   make up-vanilla    Deploy the vanilla YAML example
@@ -12,7 +12,8 @@
 #   make up-basic      Deploy the basic nginx Helm example
 #   make up-fastapi    Deploy the FastAPI Helm example (pre-built GHCR image)
 #   make up-podinfo    Deploy the podinfo wrapper Helm example
-#   make update-hosts  Update /etc/hosts with NebariApp hostnames
+#   make update-hosts  Update /etc/hosts with NebariApp and Keycloak hostnames
+#   make login-test    Log in to the FastAPI example with curl
 #   make down          Delete the kind cluster
 
 VANILLA_DIR   := ../examples/vanilla-yaml
@@ -23,7 +24,11 @@ CHART_PODINFO := ../examples/wrap-existing-chart/chart
 CLUSTER_NAME  := my-pack-dev
 HOSTNAME      := my-pack.nebari.local
 CACHE_DIR     := .cache
-OPERATOR_REPO := $(CACHE_DIR)/nebari-operator
+# Ref-specific so changing OPERATOR_REF never reuses scripts cloned for another version.
+OPERATOR_REPO = $(CACHE_DIR)/nebari-operator-$(OPERATOR_REF)
+# Pods cannot resolve keycloak.nebari.local, so apps that verify tokens fetch
+# Keycloak's signing keys from the in-cluster Service instead.
+KEYCLOAK_JWKS_URL := http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth/realms/nebari/protocol/openid-connect/certs
 
 # MetalLB IP pool configuration template.
 # METALLB_BASE_IP is substituted at runtime with the Kind network base.
@@ -48,7 +53,7 @@ spec:
 endef
 export METALLB_POOL
 
-.PHONY: up-vanilla up-kustomize up-basic up-fastapi up-podinfo down cluster update-hosts
+.PHONY: up-vanilla up-kustomize up-basic up-fastapi up-podinfo down cluster update-hosts login-test
 
 # --------------------------------------------------------------------------
 # cluster - create kind cluster with full Nebari infrastructure
@@ -60,7 +65,7 @@ cluster:
 		$(MAKE) _cluster-create; \
 	fi
 
-_cluster-create: _clone-operator _kind-create _metallb _services _keycloak-setup _operator _label-namespace
+_cluster-create: _clone-operator _kind-create _metallb _services _keycloak-setup _operator _configure-operator _label-namespace
 	@echo ""
 	@echo "=========================================="
 	@echo "Cluster setup complete!"
@@ -68,7 +73,7 @@ _cluster-create: _clone-operator _kind-create _metallb _services _keycloak-setup
 	@echo ""
 	@echo "Run 'make up-basic' (or any up-* target) to deploy an example."
 
-OPERATOR_REF := v0.1.0-alpha.19
+OPERATOR_REF ?= v0.1.1
 
 _clone-operator:
 	@if [ ! -d "$(OPERATOR_REPO)" ]; then \
@@ -115,6 +120,11 @@ _operator:
 		-n nebari-operator-system --timeout=120s
 	@echo "nebari-operator is running"
 
+# Set the operator env that NIC sets on real clusters and expose Keycloak at
+# keycloak.nebari.local. See configure-operator.sh for why each one matters.
+_configure-operator:
+	./configure-operator.sh
+
 _label-namespace:
 	kubectl label namespace default nebari.dev/managed=true --overwrite
 
@@ -127,7 +137,7 @@ up-vanilla: cluster
 	sed 's/my-pack.nebari.example.com/$(HOSTNAME)/' \
 		$(VANILLA_DIR)/nebariapp.yaml | kubectl apply -f -
 	kubectl wait --for=condition=ready pod -l app=my-pack --timeout=120s
-	kubectl wait --for=condition=Ready nebariapp/my-pack --timeout=120s
+	./verify-nebariapp.sh my-pack $(HOSTNAME)
 	CLUSTER_NAME=$(CLUSTER_NAME) $(OPERATOR_REPO)/dev/scripts/networking/update-hosts.sh
 	@echo ""
 	@echo "Vanilla nginx deployed with NebariApp."
@@ -141,7 +151,7 @@ up-kustomize: cluster
 		| sed 's/my-pack.dev.nebari.example.com/$(HOSTNAME)/' \
 		| kubectl apply -f -
 	kubectl wait --for=condition=ready pod -l app=my-pack --timeout=120s
-	kubectl wait --for=condition=Ready nebariapp/my-pack --timeout=120s
+	./verify-nebariapp.sh my-pack $(HOSTNAME)
 	CLUSTER_NAME=$(CLUSTER_NAME) $(OPERATOR_REPO)/dev/scripts/networking/update-hosts.sh
 	@echo ""
 	@echo "Kustomize nginx deployed with NebariApp."
@@ -156,7 +166,7 @@ up-basic: cluster
 		--set nebariapp.enabled=true \
 		--set nebariapp.hostname=$(HOSTNAME) \
 		--wait --timeout 2m
-	kubectl wait --for=condition=Ready nebariapp/my-pack-my-pack --timeout=120s
+	./verify-nebariapp.sh my-pack $(HOSTNAME)
 	CLUSTER_NAME=$(CLUSTER_NAME) $(OPERATOR_REPO)/dev/scripts/networking/update-hosts.sh
 	@echo ""
 	@echo "Basic nginx deployed with NebariApp."
@@ -171,13 +181,15 @@ up-fastapi: cluster
 		--set nebariapp.enabled=true \
 		--set nebariapp.hostname=$(HOSTNAME) \
 		--set nebariapp.auth.enabled=true \
-		--wait --timeout 2m
-	kubectl wait --for=condition=Ready nebariapp/my-pack-my-pack --timeout=120s
+		--set oidc.jwksURL=$(KEYCLOAK_JWKS_URL) \
+		--wait --timeout 3m
+	./verify-nebariapp.sh my-pack $(HOSTNAME) --auth
 	CLUSTER_NAME=$(CLUSTER_NAME) $(OPERATOR_REPO)/dev/scripts/networking/update-hosts.sh
 	@echo ""
 	@echo "FastAPI app deployed with NebariApp (auth enabled)."
 	@echo "  https://$(HOSTNAME)"
 	@echo "  Keycloak login: admin / nebari-admin"
+	@echo "  Check the login flow from the terminal: make login-test"
 
 # --------------------------------------------------------------------------
 # up-podinfo - deploy podinfo wrapper Helm example with NebariApp
@@ -188,7 +200,7 @@ up-podinfo: cluster
 		--set nebariapp.enabled=true \
 		--set nebariapp.hostname=$(HOSTNAME) \
 		--wait --timeout 3m
-	kubectl wait --for=condition=Ready nebariapp/my-pack-my-pack --timeout=120s
+	./verify-nebariapp.sh my-pack $(HOSTNAME)
 	CLUSTER_NAME=$(CLUSTER_NAME) $(OPERATOR_REPO)/dev/scripts/networking/update-hosts.sh
 	@echo ""
 	@echo "Podinfo deployed with NebariApp."
@@ -199,6 +211,14 @@ up-podinfo: cluster
 # --------------------------------------------------------------------------
 update-hosts:
 	CLUSTER_NAME=$(CLUSTER_NAME) $(OPERATOR_REPO)/dev/scripts/networking/update-hosts.sh
+	CLUSTER_NAME=$(CLUSTER_NAME) $(OPERATOR_REPO)/dev/scripts/networking/update-hosts.sh keycloak
+
+# --------------------------------------------------------------------------
+# login-test - log in to the FastAPI example with curl and check that the app
+# verified the token. Run after up-fastapi; needs no /etc/hosts entries.
+# --------------------------------------------------------------------------
+login-test:
+	./login-test.sh $(HOSTNAME)
 
 # --------------------------------------------------------------------------
 # down - delete the kind cluster

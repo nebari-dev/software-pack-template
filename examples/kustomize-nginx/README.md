@@ -18,7 +18,7 @@ kustomize-nginx/
       nebariapp-patch.yaml # Dev hostname, auth disabled
     production/
       kustomization.yaml   # Patches base for production
-      nebariapp-patch.yaml # Production hostname, auth enabled with groups
+      nebariapp-patch.yaml # Production hostname, auth enabled
 ```
 
 ## When to use this approach
@@ -49,7 +49,7 @@ metadata:
   name: my-pack
   namespace: argocd
 spec:
-  project: default
+  project: nebari-apps   # NIC's AppProject for packs; "default" is deny-all
   source:
     repoURL: https://github.com/YOUR-ORG/YOUR-REPO.git
     targetRevision: main
@@ -63,6 +63,11 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+    # The operator only reconciles NebariApps in namespaces labeled
+    # nebari.dev/managed=true. ArgoCD applies this to the namespace it creates.
+    managedNamespaceMetadata:
+      labels:
+        nebari.dev/managed: "true"
 ```
 
 ### kubectl apply -k
@@ -71,7 +76,7 @@ spec:
 # Dev environment (auth disabled)
 kubectl apply -k examples/kustomize-nginx/overlays/dev/
 
-# Production environment (auth enabled, restricted to groups)
+# Production environment (auth enabled)
 kubectl apply -k examples/kustomize-nginx/overlays/production/
 ```
 

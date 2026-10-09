@@ -50,7 +50,7 @@ metadata:
   name: my-pack
   namespace: argocd
 spec:
-  project: default
+  project: nebari-apps   # NIC's AppProject for packs; "default" is deny-all
   source:
     repoURL: https://github.com/YOUR-ORG/YOUR-REPO.git
     targetRevision: main
@@ -69,6 +69,11 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+    # The operator only reconciles NebariApps in namespaces labeled
+    # nebari.dev/managed=true. ArgoCD applies this to the namespace it creates.
+    managedNamespaceMetadata:
+      labels:
+        nebari.dev/managed: "true"
 ```
 
 To override upstream values via ArgoCD:
@@ -88,7 +93,7 @@ To override upstream values via ArgoCD:
 
 ```bash
 # Build dependencies first
-helm dependency update ./chart/
+helm dependency build ./chart/
 
 # Deploy on Nebari
 helm install my-pack ./chart/ \
@@ -105,7 +110,7 @@ helm install my-pack ./chart/ \
 ## Local development (standalone, no Nebari)
 
 ```bash
-helm dependency update ./chart/
+helm dependency build ./chart/
 helm install test-wrap ./chart/
 
 # Access via port-forward

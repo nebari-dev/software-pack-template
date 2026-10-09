@@ -122,34 +122,71 @@ For example: `IdToken-a1b2c3d4`, `AccessToken-a1b2c3d4`.
 Cookie names can be customized via the `cookieNames` field in the SecurityPolicy's
 OIDC configuration.
 
-### Reading the IdToken in your app
+### Reading user identity in your app
 
-Find the cookie starting with `IdToken-`:
+The IdToken is a JWT signed by Keycloak. **Verify its signature before you trust any claim
+in it.** Envoy Gateway does not do this for you:
+
+- Envoy's OAuth2 filter never checks the JWT signature. It reads the token only for its
+  expiry, and protects its own cookies with an HMAC.
+- Requests can reach your app without passing through that filter. The Service is
+  reachable from any pod in the cluster unless you add a NetworkPolicy, and paths listed
+  in `routing.publicRoutes` are served by an HTTPRoute with no SecurityPolicy attached.
+  A request on any of those paths can carry any `IdToken-*` cookie it likes.
+
+Whether the platform should state or enforce this itself is tracked in
+[nebari-operator#194](https://github.com/nebari-dev/nebari-operator/issues/194).
+
+Verification needs three values, all available to your pod:
+
+| Value | Where it comes from |
+|-------|---------------------|
+| Client ID (the token's `aud`) | `client-id` key of the `<nebariapp-name>-oidc-client` Secret |
+| Issuer (the token's `iss`) | `issuer-url` key of the same Secret. It is empty unless the operator runs with `KEYCLOAK_EXTERNAL_URL`; in that case use the issuer your Keycloak puts in tokens. |
+| JWKS URL | Keycloak serves it at `<issuer>/protocol/openid-connect/certs`. Use the in-cluster Keycloak URL if your pods cannot reach the public one. |
+
+With [PyJWT](https://pyjwt.readthedocs.io/) (`PyJWT[crypto]>=2.10.1`; 2.10.0 has a broken issuer check,
+[CVE-2024-53861](https://github.com/advisories/GHSA-75c5-xw7c-p5pm)):
 
 ```python
-for name, value in request.cookies.items():
-    if name.startswith("IdToken-"):
-        full_token = value
-        break
+import logging
+
+import jwt
+
+log = logging.getLogger(__name__)
+
+# The JWK set is cached for 5 minutes. Avoid cache_keys=True: its per-key cache never
+# expires, so a key Keycloak has removed would stay trusted until the process restarts.
+jwks = jwt.PyJWKClient(JWKS_URL, timeout=5)
+
+
+def verified_claims(request) -> dict | None:
+    tokens = [v for k, v in request.cookies.items() if k.startswith("IdToken-")]
+    if len(tokens) != 1:  # none, or an extra cookie someone added
+        return None
+    try:
+        key = jwks.get_signing_key_from_jwt(tokens[0])
+        return jwt.decode(
+            tokens[0],
+            key.key,
+            algorithms=["RS256"],
+            audience=CLIENT_ID,
+            issuer=ISSUER,
+            options={"require": ["exp", "iss", "aud"]},
+        )
+    except jwt.PyJWKClientConnectionError:
+        log.warning("JWKS unreachable; treating request as unauthenticated")
+        return None
+    except jwt.PyJWTError:
+        return None
 ```
 
-### Decoding the JWT payload
+The [auth-fastapi example](https://github.com/nebari-dev/software-pack-template/tree/main/examples/auth-fastapi)
+does this end to end, including wiring the three values from the Secret in its Helm chart.
 
-The IdToken is a standard JWT with three base64url-encoded sections separated by dots:
-`header.payload.signature`
-
-Since Envoy Gateway already verified the signature, you can safely decode just the
-payload to extract claims:
-
-```python
-import base64, json
-
-parts = full_token.split(".")
-payload = parts[1]
-# Add base64 padding
-payload += "=" * (4 - len(payload) % 4)
-claims = json.loads(base64.urlsafe_b64decode(payload))
-```
+To keep traffic from bypassing the gateway entirely, also restrict ingress to your pods to
+the Envoy proxies. The auth-fastapi chart ships an optional NetworkPolicy for this
+(`networkPolicy.enabled: true`).
 
 ### Common JWT claims
 
@@ -198,20 +235,23 @@ metadata:
 data:
   client-id: <base64-encoded>       # Always present. Value: <namespace>-<nebariapp-name>
   client-secret: <base64-encoded>   # Always present. Cryptographically generated.
-  issuer-url: <base64-encoded>      # Present when external consumers are configured.
-                                    # Value: Keycloak issuer URL (e.g., https://keycloak.example.com/realms/nebari)
+  issuer-url: <base64-encoded>      # Always present. Empty unless the operator has
+                                    # KEYCLOAK_EXTERNAL_URL set; then the public issuer
+                                    # (e.g., https://keycloak.example.com/realms/nebari)
   spa-client-id: <base64-encoded>   # Present when spaClient is enabled.
   device-client-id: <base64-encoded> # Present when deviceFlowClient is enabled.
 ```
 
-The operator also creates RBAC resources granting your app's ServiceAccount read
-access to the secret:
+The operator also creates a Role and RoleBinding that let `spec.serviceAccountName` (default: the
+NebariApp name) `get` this Secret through the Kubernetes API:
 
 - **Role:** `<nebariapp-name>-oidc-secret-reader`
 - **RoleBinding:** `<nebariapp-name>-oidc-secret-reader`
 
-This means your app's pods can reference the secret in `env.valueFrom.secretKeyRef`
-without additional RBAC configuration.
+You only need this if your app reads the Secret through the API. Referencing it with
+`env.valueFrom.secretKeyRef` or a volume works without any Role, because the kubelet
+fetches it. The Role does not stop anyone else from reading the Secret either; see
+"Who can read the OIDC Secret" in the NebariApp CRD reference.
 
 ### 3. Envoy Gateway SecurityPolicy (when `enforceAtGateway: true`)
 
@@ -219,21 +259,31 @@ without additional RBAC configuration.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
-  name: <nebariapp-name>-oidc
+  name: <nebariapp-name>-security
 spec:
   targetRefs:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
-      name: <nebariapp-name>
+      name: <nebariapp-name>-route
   oidc:
     provider:
-      issuer: https://<keycloak-host>/realms/<realm>
-    clientID: <from-secret>
+      # In-cluster Keycloak URL, used only by Envoy Gateway's control plane
+      issuer: http://<keycloak-service>.<keycloak-namespace>.svc.cluster.local/.../realms/<realm>
+      tokenEndpoint: <in-cluster Keycloak>/protocol/openid-connect/token
+      # Browser-facing endpoints, set when the operator has KEYCLOAK_EXTERNAL_URL
+      authorizationEndpoint: <public Keycloak>/protocol/openid-connect/auth
+      endSessionEndpoint: <public Keycloak>/protocol/openid-connect/logout
+    clientID: <namespace>-<nebariapp-name>
     clientSecret:
       name: <nebariapp-name>-oidc-client
     redirectURL: https://<hostname><redirectURI>
+    logoutPath: /logout
     scopes: [openid, profile, email]
 ```
+
+The policy targets only `<nebariapp-name>-route`. Paths in `routing.publicRoutes` are
+served by a second HTTPRoute, `<nebariapp-name>-public-route`, which has no SecurityPolicy.
+The policy contains no authorization rules: `auth.groups` is not enforced here.
 
 ### 4. HTTPRoute
 
@@ -241,7 +291,7 @@ spec:
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: <nebariapp-name>
+  name: <nebariapp-name>-route   # plus <nebariapp-name>-public-route for publicRoutes
 spec:
   parentRefs:
     - name: <gateway-name>
@@ -256,13 +306,18 @@ spec:
 
 ### 5. cert-manager Certificate (when `routing.tls.enabled: true`)
 
+Created only when the operator has a cert-manager ClusterIssuer configured and
+`routing.tls.secretName` is not set. Certificates live in the Gateway's namespace, so
+their names include the app's namespace:
+
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: <nebariapp-name>-tls
+  name: <nebariapp-name>-<namespace>-cert
+  namespace: envoy-gateway-system
 spec:
-  secretName: <nebariapp-name>-tls
+  secretName: <nebariapp-name>-<namespace>-tls
   dnsNames:
     - <hostname>
   issuerRef:
@@ -280,7 +335,7 @@ with the OAuth flow, such as mapping Keycloak groups/roles to app-internal roles
 ### Gateway-only auth (app reads JWT from cookies)
 
 If your app just needs user identity (not role mapping), use `enforceAtGateway: true`
-(the default) and read the IdToken cookie as described above.
+(the default) and read and verify the IdToken cookie as described above.
 
 ### App-native auth only (no gateway enforcement)
 
@@ -335,7 +390,8 @@ extraEnvRaw:
       secretKeyRef:
         name: <nebariapp-name>-oidc-client
         key: issuer-url
-        optional: true  # May not be present in all configurations
+        optional: true  # Written by the operator when it provisions the client (empty unless
+                        # KEYCLOAK_EXTERNAL_URL is set); with provisionClient: false, you write it
 ```
 
 The OIDC discovery URL can be constructed as:
@@ -350,7 +406,7 @@ Your app then configures its OAuth provider using these environment variables.
 
 ## NebariApp CRD vs Envoy Gateway SecurityPolicy
 
-The fields documented in the [NebariApp CRD Reference](/nebariapp-crd-reference/) are
+The fields documented in the [NebariApp API reference](https://github.com/nebari-dev/nebari-operator/blob/v0.1.1/docs/api-reference.md) are
 the fields the **operator** understands - they go on `spec.auth` of the NebariApp
 resource. At runtime, the operator generates an Envoy Gateway `SecurityPolicy` from
 the NebariApp, and that SecurityPolicy has its own (much larger) set of OIDC tuning
@@ -381,9 +437,11 @@ for the full set of OIDC fields.
 
 ## Limitations
 
-- **Local development:** The OIDC flow requires Keycloak and Envoy Gateway. When
-  developing locally with kind, set `nebariapp.enabled=false` and test without auth.
-  The FastAPI example shows "Not Authenticated" when no IdToken cookie is present.
+- **Local development:** The `dev/` Makefile builds a kind cluster with Keycloak, Envoy
+  Gateway, cert-manager and the operator, so you can test the full login flow locally:
+  `cd dev && make up-fastapi`, then `make update-hosts` so the browser can resolve
+  `keycloak.nebari.local`, then log in with the Keycloak credentials it prints. The
+  FastAPI example shows "Not Authenticated" when no valid IdToken cookie is present.
 
 - **Token expiration:** Envoy Gateway handles token refresh automatically via refresh
   tokens stored in cookies. Your app does not need to handle token refresh.
